@@ -1,0 +1,97 @@
+current implementation sucks, and really doesn't work. After reading the more closely and looking to the Experiment details, specifically HotPotQA.
+here is how i'll fix it:
+
+- start with improving the metric function
+- write better optimizer initializer, that takes in that + D -> runs on a minibatch B to generate initial demos from successful traces. (grounding)
+- abstract away the optimizer for the use-case, put in separate folder. 
+    use case should import init the optimizaer and compile it. more like mipro_v2 does it
+
+
+Things I've now clearly seen were implemented incorrectly:
+    - instead of mocking the retiriver and using the context provided by the dataset, instead use an actual retiriver
+    - following from the mistake above, the grounders need to be fixed
+    - only optimizes instructions instead of instructions and demos
+    - instruction pool is fixed upfront. Optional, i could allow for new instruction generation while runnign the bayesian model
+    - dataset summary, program summary etc were all quite shallow
+    - first priority, fix the mertic function used to calculate scores
+    - program summary is hard coded, fix this
+
+After looking at the twitter post on mipro, this what i got, and should help with implementing this correctly.
+
+read code, analyze dataset and run program a few times to produce example traces.
+(these are boostrapped examples that are used to start with)
+
+1. Grounded Instruction Proposal
+    1. program-aware grounding
+    2. data-aware grouding
+    3. successful boostrapped program traces
+    4. programming tips:
+        - "don't be afraid to be creative"
+        - provide lm with persona that is relevant to the task (ie. "you are a ...")
+        - "the instruction should include a high stakes scenario in which the lm must solve the task!"
+        - "keep the instruction clear and concise"
+
+2. Bootstrap fewshot generation
+    - discard traces with poor scores
+    - if output of traces is high on metric, keep
+
+3. given instructions & demo, build bayesian surrogate to sample combinations and assign a belief over their utility
+    - use minibatches, rarely (every after x minibatches) do a full eval
+
+
+Experiment:
+
+1. datasplit
+    - 500 trainset
+    - 500 development
+    - 2k testset
+
+2. Optimizer budget:
+    - 50 full eval trial (300 minibatches)
+    * I might lower this number significantly
+
+
+3. Optimizer Hyperparameters:
+    - N: number of candidate options
+    - the team used N < T/v, where T is the trial optimization budget and v is the total number of variables beign optimized over
+    - for HotPotQA, N=30
+    * depending on how long this takes to run, i might significantly lower the number
+
+4. Language Model Hyperparameters
+    - team used LLama 3 8B served using SGLang on A100 GPUs
+    -  temperature=0.7
+    - top_p=1.0
+    - generated until max_token reached for a given task or at stop tockens
+    - for proposer model, team used gpt-3.5 with temperature=0.7 and top_p=1.0 or gpt-4 with same settings
+    * I might instead use a single model for ev everything if using multipel model is too compute intensive for my local machine
+
+5. Grounding
+    - team used their custom way to giving a module signature used to generatea prompt for model detailing what is should expect and input/output. 
+        excluded for conciseness
+    * to keep this focused on subject at hand, i won't rewrite dspy signature. I might either use theirs or just write the proposed module instruction by hand/use their example
+    - tips = {
+        " none ": "" , 
+        " creative ": " Don 't be afraid to be creative !" ,
+        " simple ": " Keep the instruction clear and concise ." ,
+        " description ": " Make sure your instruction is very informative and descriptive ." ,
+        " high_stakes ": " The instruction should include a high stakes scenario in which the LM must solve the task !" ,
+        " persona ": " Provide the LM with a persona that is relevant to the task ( ie . \" You are a ...\") "
+    }
+    - to get dataset summary, iterate of dataset in bathces. if lm has nothing to contribute output "COMPLETE". on 5th "COMPLETE", stop then summerize accumulated obervations.
+    - Dataset Descriptor Prompt: "Given several examples from a dataset please write observations about trends that hold for most or all of the samples. I will also provide you with a few observations I have already made. Please add your own observations or if you feel the observations are comprehensive say ’COMPLETE’. Some areas you may consider in your observations: topics, content, syntax, conciceness, etc. It will be useful to make an educated guess as to the nature of the task this dataset will enable. Don’t be afraid to be creative"
+    - Dataset Summarizer Prompt: "Given a series of observations I have made about my dataset, please summarize them into a brief 2-3 sentence summary which highlights only the most important details."
+    - Program Summarizer Prompt: "Below is some pseudo-code for a pipeline that solves tasks with calls to language models. Please describe what type of task this program appears to be designed to solve, and how it appears to work" + include code
+    - for HotPotQA, oder of Hyperparameter importance:
+        - 1_parent_predictor_demos
+        - tip
+        - prompt_model
+        - 0_parent_predictor_demos
+        - temperature
+        - use_prompt_history
+        - use_dataset_summary
+        - program_aware
+        * plan to remove lesser import Hyperparameters from consideration if optimizer takes too long
+    - multihop:
+        - retriever
+        - query_generator
+        - answer generator
