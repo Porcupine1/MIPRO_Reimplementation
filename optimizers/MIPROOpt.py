@@ -17,6 +17,7 @@ from config import (
     OUTPUT_DIR,
     NUM_CANDIDATES,
     MINIBATCH_FULL_EVAL_STEPS,
+    MAX_EXAMPLES,
 )
 
 
@@ -64,7 +65,9 @@ class MIPROOptimizer:
         self.instruction_candidates = None
         # Sort module names once for deterministic predictor indexing
         self.module_names = sorted(self.program.get_module_names())
-        self.predictor_to_module = {idx: name for idx, name in enumerate(self.module_names)}
+        self.predictor_to_module = {
+            idx: name for idx, name in enumerate(self.module_names)
+        }
         self.surrogate = None
 
         # results
@@ -103,13 +106,13 @@ class MIPROOptimizer:
         train_data = self.dataset.get_split(split="train")
         if not train_data:
             raise ValueError("Cannot optimize: No training data available")
-        # Limit train/validation to at most 1000 examples each to keep search fast
-        if len(train_data) > 1000:
-            train_data = train_data.shuffle(seed=42).select(range(1000))
+        # Limit train/validation to configured max_examples to keep search fast
+        if len(train_data) > MAX_EXAMPLES:
+            train_data = train_data.shuffle(seed=42).select(range(MAX_EXAMPLES))
             self.dataset.train = train_data
         val_data = self.dataset.get_split(split="validation")
-        if val_data is not None and len(val_data) > 1000:
-            val_data = val_data.shuffle(seed=42).select(range(1000))
+        if val_data is not None and len(val_data) > MAX_EXAMPLES:
+            val_data = val_data.shuffle(seed=42).select(range(MAX_EXAMPLES))
             self.dataset.validation = val_data
 
         # Initialize GroundingHelper with training data and program (generates summaries)
@@ -125,7 +128,9 @@ class MIPROOptimizer:
         # Step 1: Bootstrap Few-Shot Examples
         logger.info("[Step 1/3] Bootstrapping few-shot examples...")
         demo_candidates = self.bootstrapper.bootstrap_candidates(
-            num_candidates=NUM_CANDIDATES, train_data=train_data, module_names=self.module_names
+            num_candidates=NUM_CANDIDATES,
+            train_data=train_data,
+            module_names=self.module_names,
         )
         logger.info(
             "Created candidate demo sets (per-predictor counts): %s",
@@ -225,9 +230,13 @@ class MIPROOptimizer:
     ) -> float:
         """
         Evaluate a configured program (any object exposing process_batch) on a batch for the specified split.
+
+        For non-train splits (validation/test), uses deterministic sampling to ensure
+        consistent evaluation across trials. This reduces noise in optimization curves.
         """
-        # Sample batch
-        batch = self.dataset.sample_batch(batch_size, split=split)
+        # Sample batch - use fixed seed for validation to ensure consistent eval
+        seed = 42 if split != "train" else None
+        batch = self.dataset.sample_batch(batch_size, split=split, seed=seed)
 
         if not batch:
             # Return 0.0 if no examples available

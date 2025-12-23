@@ -37,9 +37,7 @@ class DemoBootstrapper:
         self.metric = metric
         self.threshold = threshold
 
-    def _check_grounding(
-        self, trace_entry: Dict[str, Any]
-    ) -> bool:
+    def _check_grounding(self, trace_entry: Dict[str, Any]) -> bool:
         """
         Generic grounding check for trace entries.
         Rejects demos with insufficient context or fallback refusals.
@@ -54,15 +52,17 @@ class DemoBootstrapper:
         # Only apply grounding checks to answer module (requires context)
         if module_name == "answer":
             context = trace_input.get("context", "")
-            
+
             # Check context length
             if len(context.strip()) < MIN_CONTEXT_CHARS:
                 logger.info(
                     "Rejected bootstrapped demo for module '%s': context too short (len=%d, min=%d)",
-                    module_name, len(context.strip()), MIN_CONTEXT_CHARS
+                    module_name,
+                    len(context.strip()),
+                    MIN_CONTEXT_CHARS,
                 )
                 return False
-            
+
             # Check for fallback refusals
             lower_output = trace_output.lower()
             refusal_phrases = [
@@ -74,10 +74,10 @@ class DemoBootstrapper:
             if any(phrase in lower_output for phrase in refusal_phrases):
                 logger.info(
                     "Rejected bootstrapped demo for module '%s': output is a fallback refusal",
-                    module_name
+                    module_name,
                 )
                 return False
-        
+
         return True
 
     def _run_and_score(
@@ -120,18 +120,23 @@ class DemoBootstrapper:
         """
         Bootstrap candidate demo sets for each module.
 
+        Always creates 2 baseline sets (zero-shot + labeled-only), then num_candidates
+        additional sets with bootstrapped demos.
+
         Structure: {module_name: [[demo_set_0], [demo_set_1], ...]}
-        Each demo_set is a list of demos for that module.
+        - Set 0: Always empty (zero-shot baseline)
+        - Set 1: Always labeled-only (labeled baseline)
+        - Sets 2+: Bootstrapped demos (controlled by num_candidates)
 
         Args:
-            num_candidates: Number of candidate demo sets to create per module
+            num_candidates: Number of bootstrapped demo sets to create (beyond the 2 baselines)
             max_bootstrapped_demos: Maximum bootstrapped demos per set
-            max_labeled_demos: Maximum labeled demos per set
+            max_labeled_demos: Maximum labeled demos per set (used in baseline and mixed sets)
             train_data: Optional training split to use. If None, uses dataset's train split.
             module_names: Optional sorted list of module names. If None, sorts program modules.
 
         Returns:
-            Dict mapping module_name -> list of candidate demo sets
+            Dict mapping module_name -> list of candidate demo sets (total: num_candidates + 2)
         """
         # Resolve training data source
         if train_data is None:
@@ -142,7 +147,9 @@ class DemoBootstrapper:
                 train_data = getattr(self.dataset, "train", None)
 
         if train_data is None:
-            logger.warning("No training data provided to DemoBootstrapper; returning empty candidates.")
+            logger.warning(
+                "No training data provided to DemoBootstrapper; returning empty candidates."
+            )
             return {}
 
         # Track how many examples we have tried; by default we iterate over all
@@ -156,7 +163,8 @@ class DemoBootstrapper:
 
         logger.info(
             "[Step 1] Bootstrapping %d candidate demo sets per module "
-            "(up to %d bootstrapped + %d labeled demos per set)",
+            "(always: zero-shot + labeled-only, then %d bootstrapped sets with up to %d bootstrapped + %d labeled demos per set)",
+            num_candidates + 2,  # Total including zero-shot and labeled-only
             num_candidates,
             max_bootstrapped_demos,
             max_labeled_demos,
@@ -197,11 +205,11 @@ class DemoBootstrapper:
                                 # Apply generic grounding checks
                                 if not self._check_grounding(trace_entry):
                                     continue
-                                
+
                                 # Store demo in consistent trace format with score
                                 demo = {**trace_entry, "score": score}
                                 bootstrapped_demos[module_name].append(demo)
-                                
+
                                 # Log accepted demo
                                 trace_input = trace_entry.get("input", {})
                                 if module_name == "answer":
@@ -209,12 +217,15 @@ class DemoBootstrapper:
                                     context_len = len(context)
                                     logger.info(
                                         "Accepted bootstrapped demo: module=%s, score=%.3f, context_len=%d",
-                                        module_name, score, context_len
+                                        module_name,
+                                        score,
+                                        context_len,
                                     )
                                 else:
                                     logger.info(
                                         "Accepted bootstrapped demo: module=%s, score=%.3f",
-                                        module_name, score
+                                        module_name,
+                                        score,
                                     )
             except Exception as e:
                 logger.warning(
@@ -284,27 +295,29 @@ class DemoBootstrapper:
             bootstrapped = bootstrapped_demos[module_name]
             labeled = labeled_demos[module_name]
 
+            # Always include set 0 (zero-shot) and set 1 (labeled-only) as baselines
+            # These don't count toward num_candidates
+
+            # Candidate set 0: Empty (zero-shot baseline)
+            demo_candidates[module_name].append([])
+
+            # Candidate set 1: Labels only (labeled baseline)
+            demo_candidates[module_name].append(labeled[:max_labeled_demos])
+
+            # Now create num_candidates additional sets with bootstrapped demos
             for i in range(num_candidates):
                 candidate_set = []
 
-                # Candidate set 0: Empty (zero-shot)
+                # First candidate: Bootstrapped only (unshuffled)
                 if i == 0:
-                    candidate_set = []
-
-                # Candidate set 1: Labels only
-                elif i == 1:
-                    candidate_set = labeled[:max_labeled_demos]
-
-                # Candidate set 2: Bootstrapped only (unshuffled)
-                elif i == 2:
                     candidate_set = bootstrapped[:max_bootstrapped_demos]
 
-                # Candidate set 3: Bootstrapped only (shuffled)
-                elif i == 3:
+                # Second candidate: Bootstrapped only (shuffled)
+                elif i == 1:
                     candidate_set = bootstrapped[:max_bootstrapped_demos].copy()
                     random.shuffle(candidate_set)
 
-                # Candidate set 4+: Mixed (bootstrapped + labeled)
+                # Remaining candidates: Mixed (bootstrapped + labeled)
                 else:
                     # Sample bootstrapped demos
                     n_bootstrapped = min(max_bootstrapped_demos, len(bootstrapped))
@@ -320,18 +333,23 @@ class DemoBootstrapper:
                         sampled_labeled = random.sample(labeled, n_labeled)
                         candidate_set.extend(sampled_labeled)
 
-                    # Shuffle mixed sets
+                    # Shuffle mixed set
                     random.shuffle(candidate_set)
 
                 demo_candidates[module_name].append(candidate_set)
 
             logger.info(
-                "Module '%s': %d candidate demo sets created",
+                "Module '%s': %d candidate demo sets created (2 baselines + %d bootstrapped)",
                 module_name,
                 len(demo_candidates[module_name]),
+                num_candidates,
             )
 
-        logger.info("Created %d candidate demo sets per module", num_candidates)
+        logger.info(
+            "Created %d total candidate demo sets per module (2 baselines + %d bootstrapped)",
+            num_candidates + 2,
+            num_candidates,
+        )
         # Return predictor-indexed mapping for downstream consumers
         predictor_demo_candidates = {
             idx: demo_candidates[module_name]

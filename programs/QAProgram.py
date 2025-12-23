@@ -5,6 +5,7 @@ import logging
 from backend import LMBackend
 from retrievers import build_retriever, Retriever
 from QADataset import QADataset
+from config import MAX_CONTEXT_CHARS
 from .PromptMod import PromptModule, QueryModule, AnswerModule
 
 
@@ -63,8 +64,9 @@ class QAProgram:
         self, question: str, query: str, example: Dict[str, Any]
     ) -> str:
         """
-        Retrieve context using the configured retriever and pack **all**
-        retrieved sentences without truncation.
+        Retrieve context using the configured retriever and pack retrieved
+        sentences, truncating to MAX_CONTEXT_CHARS to prevent exceeding model limits.
+        Uses sentence-aware truncation to avoid cutting mid-tag or mid-sentence.
         """
 
         logger.debug(
@@ -89,10 +91,37 @@ class QAProgram:
                     for s in passage.sentences
                     if s and s.strip()
                 )
-        context = "\n".join(lines)
+
+        # Sentence-aware truncation: keep complete tagged sentences up to the limit
+        if not lines:
+            return ""
+
+        total_chars = sum(len(line) + 1 for line in lines)  # +1 for newline
+        if total_chars <= MAX_CONTEXT_CHARS:
+            context = "\n".join(lines)
+        else:
+            # Truncate by keeping complete lines (sentences) until we hit the limit
+            kept_lines = []
+            current_length = 0
+            for line in lines:
+                line_length = len(line) + 1  # +1 for newline
+                if current_length + line_length > MAX_CONTEXT_CHARS:
+                    break
+                kept_lines.append(line)
+                current_length += line_length
+
+            context = "\n".join(kept_lines)
+            logger.debug(
+                "Context truncated (sentence-aware): kept %d/%d lines, %d/%d chars",
+                len(kept_lines),
+                len(lines),
+                len(context),
+                total_chars - 1,  # -1 to account for final newline
+            )
+
         logger.debug(
-            "Packed full context with %d lines and %d characters",
-            len(lines),
+            "Packed context with %d lines and %d characters",
+            len(context.split("\n")),
             len(context),
         )
         return context

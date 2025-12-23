@@ -62,7 +62,7 @@ class QueryModule(PromptModule):
     def __init__(
         self,
         lm: Optional[LMBackend] = None,
-        instruction: str = "Generate a search query to answer the question.",
+        instruction: str = "Write a search query for Wikipedia. Output only the query, nothing else.",
         demos: Optional[List[Dict[str, Any]]] = None,
     ):
         super().__init__(name="query", lm=lm, instruction=instruction, demos=demos)
@@ -87,6 +87,38 @@ class QueryModule(PromptModule):
         parts.append("Search Query:")
 
         return "\n".join(parts)
+
+    def parse_output(self, output: str) -> str:
+        """
+        Extract clean query from LLM output.
+        Handles verbose responses that include explanations.
+        """
+        output = output.strip()
+
+        # If output contains quotes, extract the quoted text
+        import re
+
+        quoted = re.findall(r'"([^"]+)"', output)
+        if quoted:
+            # Return the first quoted string (usually the actual query)
+            return quoted[0].strip()
+
+        # If multiple lines, try to find the line that looks like a query
+        lines = output.split("\n")
+        if len(lines) > 1:
+            # Look for lines that don't start with common explanation phrases
+            skip_phrases = ["here", "try", "you can", "this query", "or,"]
+            for line in lines:
+                line_lower = line.lower().strip()
+                if line_lower and not any(
+                    line_lower.startswith(phrase) for phrase in skip_phrases
+                ):
+                    # Check if it looks like a query (no colons, not a sentence with period at end)
+                    if ":" not in line and not line.endswith("."):
+                        return line.strip()
+
+        # Fallback: return the first line or the original output
+        return lines[0].strip() if lines else output
 
     def clone(self) -> "QueryModule":
         return QueryModule(

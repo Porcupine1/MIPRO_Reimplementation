@@ -1,15 +1,18 @@
 from datasets import load_from_disk, concatenate_datasets
 from typing import List, Dict, Any
 import random
-from config import DATA_DIR, MAX_EXAMPLES
+import config  # Import module instead of specific values
 
 
 class QADataset:
     """handler for HotpotQA dataset."""
 
-    def __init__(self, data_dir: str = DATA_DIR, max_examples: int = MAX_EXAMPLES):
-        self.data_dir = data_dir
-        self.max_examples = max_examples
+    def __init__(self, data_dir: str = None, max_examples: int = None):
+        # Read from config module at runtime (after tier may be applied)
+        self.data_dir = data_dir if data_dir is not None else config.DATA_DIR
+        self.max_examples = (
+            max_examples if max_examples is not None else config.MAX_EXAMPLES
+        )
         self.dataset = None
         self.train = None
         self.validation = None
@@ -36,15 +39,34 @@ class QADataset:
         return self
 
     def sample_batch(
-        self, batch_size: int, split: str = "train"
+        self, batch_size: int, split: str = "train", seed: int = None
     ) -> List[Dict[str, Any]]:
-        """sample random batch from dataset."""
+        """
+        Sample batch from dataset.
+
+        Args:
+            batch_size: Number of examples to sample
+            split: "train" or "validation"
+            seed: If provided, use deterministic sampling. If None, sample randomly.
+                  For validation, pass a fixed seed to ensure consistent evaluation.
+
+        Returns:
+            List of examples
+        """
 
         data = self.train if split == "train" else self.validation
         if data is None or len(data) == 0:
             return []
         sample_size = min(batch_size, len(data))
-        indices = random.sample(range(len(data)), sample_size)
+
+        if seed is not None:
+            # Deterministic sampling for consistent evaluation
+            rng = random.Random(seed)
+            indices = rng.sample(range(len(data)), sample_size)
+        else:
+            # Random sampling (default behavior for training)
+            indices = random.sample(range(len(data)), sample_size)
+
         return [data[i] for i in indices]
 
     def get_split(self, split: str = "train"):

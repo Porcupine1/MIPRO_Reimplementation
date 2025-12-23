@@ -3,11 +3,20 @@ import os
 from typing import Optional
 
 
-# ------------------------- custom log level ------------------------- #
+# ------------------------- custom log levels ------------------------- #
 
-# Define a custom level for instruction/demo dumps so they can have a distinct color.
+# Define custom levels for different optimization events
 INSTRUCTION_LEVEL = logging.INFO + 1
 logging.addLevelName(INSTRUCTION_LEVEL, "INSTR")
+
+CANDIDATE_LEVEL = logging.INFO + 2
+logging.addLevelName(CANDIDATE_LEVEL, "CANDIDATE")
+
+EVALUATION_LEVEL = logging.INFO + 3
+logging.addLevelName(EVALUATION_LEVEL, "EVAL")
+
+BEST_SCORE_LEVEL = logging.INFO + 4
+logging.addLevelName(BEST_SCORE_LEVEL, "BEST")
 
 
 def instr(self: logging.Logger, msg: str, *args, **kwargs) -> None:
@@ -16,13 +25,34 @@ def instr(self: logging.Logger, msg: str, *args, **kwargs) -> None:
         self._log(INSTRUCTION_LEVEL, msg, args, **kwargs)
 
 
+def candidate(self: logging.Logger, msg: str, *args, **kwargs) -> None:
+    """Log candidate sampling messages."""
+    if self.isEnabledFor(CANDIDATE_LEVEL):
+        self._log(CANDIDATE_LEVEL, msg, args, **kwargs)
+
+
+def evaluation(self: logging.Logger, msg: str, *args, **kwargs) -> None:
+    """Log evaluation result messages."""
+    if self.isEnabledFor(EVALUATION_LEVEL):
+        self._log(EVALUATION_LEVEL, msg, args, **kwargs)
+
+
+def best_score(self: logging.Logger, msg: str, *args, **kwargs) -> None:
+    """Log best score updates."""
+    if self.isEnabledFor(BEST_SCORE_LEVEL):
+        self._log(BEST_SCORE_LEVEL, msg, args, **kwargs)
+
+
 logging.Logger.instr = instr  # type: ignore[attr-defined]
+logging.Logger.candidate = candidate  # type: ignore[attr-defined]
+logging.Logger.evaluation = evaluation  # type: ignore[attr-defined]
+logging.Logger.best_score = best_score  # type: ignore[attr-defined]
 
 
 class ColorFormatter(logging.Formatter):
     """Formatter that adds ANSI colors based on the log level for console output."""
 
-    # Basic ANSI color codes
+    # Basic ANSI color codes with bold for emphasis
     COLORS = {
         "DEBUG": "\033[36m",  # Cyan
         "INFO": "\033[32m",  # Green
@@ -30,6 +60,9 @@ class ColorFormatter(logging.Formatter):
         "ERROR": "\033[31m",  # Red
         "CRITICAL": "\033[41m\033[97m",  # White on red background
         "INSTR": "\033[35m",  # Magenta for instructions/demos
+        "CANDIDATE": "\033[94m",  # Bright blue for candidate sampling
+        "EVAL": "\033[96m",  # Bright cyan for evaluation results
+        "BEST": "\033[1m\033[92m",  # Bold bright green for best scores
     }
     RESET = "\033[0m"
 
@@ -80,12 +113,12 @@ def setup_logging(
 
     # Optional file handler without colors
     if log_path:
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        # Ensure directory exists (only if there's a directory component)
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
         file_handler = logging.FileHandler(log_path, mode="w")
         file_handler.setLevel(level)
         file_formatter = logging.Formatter(fmt)
         file_handler.setFormatter(file_formatter)
         root.addHandler(file_handler)
-
-

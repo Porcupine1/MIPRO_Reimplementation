@@ -58,7 +58,7 @@ class SurrogateOptimizer:
         self.use_minibatch = use_minibatch
         self.val_split = val_split
         self.evaluate_fn = evaluate_fn
-        
+
         # Validate candidate structures
         self._validate_candidates()
 
@@ -80,7 +80,7 @@ class SurrogateOptimizer:
         # Validate instruction_candidates
         if not isinstance(self.instruction_candidates, dict):
             raise TypeError("instruction_candidates must be a dict")
-        
+
         for predictor_idx, candidates in self.instruction_candidates.items():
             if not isinstance(candidates, list):
                 raise TypeError(
@@ -97,11 +97,11 @@ class SurrogateOptimizer:
                         f"Instruction candidate {i} for predictor {predictor_idx} must be a string, "
                         f"got {type(candidate)}"
                     )
-        
+
         # Validate demo_candidates
         if not isinstance(self.demo_candidates, dict):
             raise TypeError("demo_candidates must be a dict")
-        
+
         for predictor_idx, demo_sets in self.demo_candidates.items():
             if not isinstance(demo_sets, list):
                 raise TypeError(
@@ -114,20 +114,26 @@ class SurrogateOptimizer:
                         f"Demo set {i} for predictor {predictor_idx} must be a list of demos, "
                         f"got {type(demo_set)}"
                     )
-        
+
         logger.debug("Candidate structure validation passed")
 
     def optimize(self) -> Dict[str, Any]:
         """Run Optuna search and return optimization artifacts."""
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         logger.info(
-            "Running Optuna TPE search (trials=%d, minibatch=%s, seed=%d)",
-            self.num_trials,
-            self.use_minibatch,
-            self.seed,
+            "\n" + "=" * 80 + "\n"
+            "Starting Optuna TPE Search\n"
+            "=" * 80 + "\n"
+            f"  Trials: {self.num_trials}\n"
+            f"  Minibatch Mode: {self.use_minibatch}\n"
+            f"  Minibatch Size: {self.minibatch_size}\n"
+            f"  Full Eval Size: {self.eval_batch_size}\n"
+            f"  Full Eval Every: {self.minibatch_full_eval_steps} trials\n"
+            f"  Random Seed: {self.seed}\n" + "=" * 80
         )
 
         # Baseline: evaluate default program configuration.
+        logger.info("\nEvaluating Baseline Configuration...")
         baseline_program = self.program.clone()
         default_instructions, default_demos = self._default_config()
         baseline_program.apply_configuration(default_instructions, default_demos)
@@ -151,6 +157,9 @@ class SurrogateOptimizer:
 
         self.best_score = baseline_score
         self.best_program = baseline_program.clone()
+        logger.best_score(  # type: ignore[attr-defined]
+            f"Baseline Score: {baseline_score:.4f} (initial best)"
+        )
 
         # Study + synthetic baseline trial.
         sampler = optuna.samplers.TPESampler(seed=self.seed, multivariate=True)
@@ -165,7 +174,14 @@ class SurrogateOptimizer:
         )
 
         def objective(trial: optuna.Trial) -> float:
+            # Log candidate sampling
+            logger.candidate(  # type: ignore[attr-defined]
+                f"\n{'─' * 80}\n" f"Trial #{trial.number} - Sampling New Candidate"
+            )
+
             config = self._sample_config(trial)
+            self._log_candidate_config(trial.number, config)
+
             candidate_program = self.program.clone()
             candidate_program.apply_configuration(
                 instructions=config["instructions"], demos=config.get("demos")
@@ -189,7 +205,14 @@ class SurrogateOptimizer:
                     }
                 )
                 self._completed_minibatch_trials += 1
+
+                # Log progress
+                self._log_trial_progress(trial.number, score, "minibatch")
+
                 if self._should_refresh_full_eval():
+                    logger.info(
+                        f"\nPeriodic Full Evaluation (after {self.minibatch_full_eval_steps} trials)"
+                    )
                     self._run_periodic_full_eval()
             else:
                 score = self._evaluate(
@@ -201,6 +224,7 @@ class SurrogateOptimizer:
                     config=config,
                 )
                 self.full_eval_calls += 1
+                self._log_trial_progress(trial.number, score, "full")
                 self._maybe_update_best(score, candidate_program, config)
 
             return score
@@ -211,11 +235,23 @@ class SurrogateOptimizer:
 
         if self.use_minibatch:
             # Final refresh with the best minibatch configs.
+            logger.info("\nFinal Full Evaluation of Top Candidates...")
             self._run_periodic_full_eval(force_final=True)
 
         # Attach optimization metadata to the best program for inspection.
         if self.best_program:
             self._annotate_best_program()
+
+        # Log final summary
+        logger.info(
+            "\n" + "=" * 80 + "\n"
+            "Optimization Complete!\n"
+            "=" * 80 + "\n"
+            f"  Final Best Score: {self.best_score:.4f}\n"
+            f"  Total Trials: {self.num_trials}\n"
+            f"  Minibatch Evaluations: {self.minibatch_eval_calls}\n"
+            f"  Full Evaluations: {self.full_eval_calls}\n" + "=" * 80
+        )
 
         return {
             "best_program": self.best_program,
@@ -318,13 +354,11 @@ class SurrogateOptimizer:
             "demo_indices": config.get("demo_indices"),
         }
         self.trial_logs.append(log_entry)
-        logger.info(
-            "[Optuna] trial=%s type=%s split=%s batch=%d score=%.4f",
-            trial_number,
-            eval_type,
-            split,
-            batch_size,
-            score,
+
+        # Use colored evaluation logging
+        logger.evaluation(  # type: ignore[attr-defined]
+            f"Trial {trial_number} | {eval_type:15s} | "
+            f"{split:10s} | batch={batch_size:3d} | Score: {score:.4f}"
         )
         return score
 
@@ -344,9 +378,15 @@ class SurrogateOptimizer:
 
     def _maybe_update_best(self, score: float, program: Any, config: Dict[str, Any]):
         if score > self.best_score:
+            improvement = score - self.best_score
             self.best_score = score
             self.best_program = program.clone()
-            logger.info("New best score found: %.4f", score)
+            logger.best_score(  # type: ignore[attr-defined]
+                f"\n{'*' * 80}\n"
+                f"NEW BEST SCORE: {score:.4f} (improvement: {improvement:+.4f})\n"
+                f"{'*' * 80}"
+            )
+            self._log_best_config(config)
 
     def _should_refresh_full_eval(self) -> bool:
         if self.minibatch_full_eval_steps <= 0:
@@ -414,6 +454,55 @@ class SurrogateOptimizer:
             if demo_sets:
                 demos[module_name] = demo_sets[idx]
         return demos if demos else None
+
+    def _log_candidate_config(self, trial_number: int, config: Dict[str, Any]) -> None:
+        """Log the sampled candidate configuration in a clean format."""
+        lines = [f"  Configuration for Trial #{trial_number}:"]
+
+        # Log instruction choices
+        if config.get("instruction_indices"):
+            lines.append("  Instructions:")
+            for module, idx in config["instruction_indices"].items():
+                instruction_text = config["instructions"].get(module, "")
+                lines.append(f"    - {module}: [{idx}] {instruction_text}")
+
+        # Log demo choices
+        if config.get("demo_indices"):
+            lines.append("  Demos:")
+            for module, idx in config["demo_indices"].items():
+                demo_count = len(config.get("demos", {}).get(module, []))
+                lines.append(f"    - {module}: set[{idx}] ({demo_count} examples)")
+
+        logger.candidate("\n".join(lines))  # type: ignore[attr-defined]
+
+    def _log_trial_progress(
+        self, trial_number: int, score: float, eval_type: str
+    ) -> None:
+        """Log trial progress with current standings."""
+        if eval_type == "minibatch":
+            progress_pct = (trial_number + 1) / self.num_trials * 100
+            logger.info(
+                f"  Progress: {trial_number + 1}/{self.num_trials} ({progress_pct:.1f}%) | "
+                f"Current: {score:.4f} | Best: {self.best_score:.4f}"
+            )
+        else:
+            logger.info(f"  Current: {score:.4f} | Best: {self.best_score:.4f}")
+
+    def _log_best_config(self, config: Dict[str, Any]) -> None:
+        """Log the configuration of the new best program."""
+        lines = ["  Best Configuration:"]
+
+        if config.get("instruction_indices"):
+            lines.append("  Instructions:")
+            for module, idx in config["instruction_indices"].items():
+                lines.append(f"    - {module}: index [{idx}]")
+
+        if config.get("demo_indices"):
+            lines.append("  Demos:")
+            for module, idx in config["demo_indices"].items():
+                lines.append(f"    - {module}: set [{idx}]")
+
+        logger.best_score("\n".join(lines))  # type: ignore[attr-defined]
 
     def _annotate_best_program(self):
         if not self.best_program:

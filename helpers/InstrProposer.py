@@ -3,7 +3,7 @@ import random
 import logging
 from backend import LMBackend
 from .GroundingHelper import GroundingHelper
-from config import N_INSTRUCTION_CANDIDATES
+import config  # Import module instead of specific values
 from programs import QAProgram
 
 
@@ -337,7 +337,7 @@ class InstructionProposer:
         bootstrapped_demos: Dict[Any, Any],
         dataset_summ: Optional[str] = None,
         program_summ: Optional[str] = None,
-        n_candidates: int = N_INSTRUCTION_CANDIDATES,
+        n_candidates: int = None,
         tip: Optional[str] = None,
         program_aware: bool = True,
         module_names: Optional[List[str]] = None,
@@ -372,6 +372,10 @@ class InstructionProposer:
             Dict mapping predictor indices (0, 1, 2...) to lists of instruction candidates.
             Each list starts with the original instruction at index 0, followed by proposed candidates.
         """
+        # Read from config at runtime (after tier may be applied)
+        if n_candidates is None:
+            n_candidates = config.N_INSTRUCTION_CANDIDATES
+
         # Use summaries from grounding_helper if not provided
         if dataset_summ is None:
             dataset_summ = self.grounding_helper.dataset_summary

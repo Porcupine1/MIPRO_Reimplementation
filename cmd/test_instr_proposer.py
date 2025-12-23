@@ -23,18 +23,22 @@ from QADataset import QADataset
 from programs import QAProgram
 from helpers import InstructionProposer
 from logging_config import setup_logging
+from config import apply_tier
 
 
 logger = logging.getLogger(__name__)
 
 
 def main():
+    # Apply LIGHT tier for fast testing
+    apply_tier("light")
+
     setup_logging(
         level=logging.INFO,
         fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    logger.info("=== InstructionProposer standalone test ===")
+    logger.info("=== InstructionProposer standalone test (LIGHT tier) ===")
 
     # 1. Load dataset and grab a small training slice for grounding
     logger.info("Loading dataset...")
@@ -46,7 +50,7 @@ def main():
         return
 
     # Use a small prefix of the train split to keep the test fast
-    max_grounding_examples = 20
+    max_grounding_examples = 5
     train_examples = [
         train_data[i] for i in range(min(len(train_data), max_grounding_examples))
     ]
@@ -99,7 +103,10 @@ def main():
             len(candidates),
         )
         # Pretty-print the first couple of options in a block per predictor
-        header_lines = ["", f"====== Instruction options for predictor {predictor_idx} ({module_name}) ======"]
+        header_lines = [
+            "",
+            f"====== Instruction options for predictor {predictor_idx} ({module_name}) ======",
+        ]
         body_lines = []
         for j, instr in enumerate(candidates[:2]):
             prefix = "original" if j == 0 else f"candidate_{j}"
@@ -109,7 +116,7 @@ def main():
 
     # Print the entire candidate set at the end (instruction-level color)
     logger.instr(
-        "\n======= FULL instruction candidate set ========\n%s\n",
+        "\n\n======= FULL instruction candidate set ========\n%s\n",
         pprint.pformat(all_candidates),
     )
 

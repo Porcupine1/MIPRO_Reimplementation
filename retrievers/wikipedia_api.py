@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Optional, Set
 
 import requests
 
-from config import MAX_WIKI_TITLES_TOTAL
+from config import (
+    MAX_WIKI_TITLES_TOTAL,
+    WIKI_FETCH_FULL_ARTICLE,
+    WIKI_MAX_EXTRACT_CHARS,
+    WIKI_PAGINATE_LINKS,
+    WIKI_MAX_LINK_ITERATIONS,
+)
 from .base import Passage, Retriever
 from .cache import SimpleCache
 from my_selectors import SentenceSelector
@@ -107,7 +113,7 @@ class WikipediaRetriever(Retriever):
         return titles
 
     def _fetch_extract(self, title: str) -> str:
-        cache_key = f"extract::{title}"
+        cache_key = f"extract::{title}::intro={not WIKI_FETCH_FULL_ARTICLE}"
         cached = self._cache_get(cache_key)
         if cached is not None:
             logger.debug(
@@ -115,16 +121,26 @@ class WikipediaRetriever(Retriever):
             )
             return cached
 
+        # Configurable: fetch intro only (fast) or full article (better coverage)
         params = {
             "action": "query",
             "prop": "extracts",
-            "exintro": True,
+            "exintro": not WIKI_FETCH_FULL_ARTICLE,  # False = full article
             "explaintext": True,
             "titles": title,
             "format": "json",
         }
+
+        # Add character limit if fetching full article to prevent excessive text
+        if WIKI_FETCH_FULL_ARTICLE and WIKI_MAX_EXTRACT_CHARS:
+            params["exchars"] = WIKI_MAX_EXTRACT_CHARS
+
         try:
-            logger.debug("Wikipedia extract (API) for %r", title)
+            logger.debug(
+                "Wikipedia extract (API) for %r (full_article=%s)",
+                title,
+                WIKI_FETCH_FULL_ARTICLE,
+            )
             resp = requests.get(
                 EXTRACT_URL,
                 params=params,
@@ -158,8 +174,11 @@ class WikipediaRetriever(Retriever):
         """
         Fetch outgoing links from a Wikipedia page (namespace 0 only).
         Used for hyperlink / link-graph driven bridging.
+
+        If WIKI_PAGINATE_LINKS is True, this will paginate through all links
+        using the continuation token. Otherwise, returns only the first batch.
         """
-        cache_key = f"links::{title}"
+        cache_key = f"links::{title}::paginate={WIKI_PAGINATE_LINKS}"
         cached = self._cache_get(cache_key)
         if cached is not None:
             logger.debug(
@@ -167,6 +186,7 @@ class WikipediaRetriever(Retriever):
             )
             return cached
 
+        links: List[str] = []
         params = {
             "action": "query",
             "prop": "links",
@@ -175,26 +195,68 @@ class WikipediaRetriever(Retriever):
             "pllimit": "max",
             "format": "json",
         }
+
         try:
-            logger.debug("Wikipedia links (API) for %r", title)
-            resp = requests.get(
-                EXTRACT_URL,
-                params=params,
-                headers=WIKI_HEADERS,
-                timeout=self.request_timeout,
+            logger.debug(
+                "Wikipedia links (API) for %r (paginate=%s)", title, WIKI_PAGINATE_LINKS
             )
-            resp.raise_for_status()
-            data = resp.json()
-            pages = data.get("query", {}).get("pages", {})
-            links: List[str] = []
-            for page in pages.values():
-                for link in page.get("links", []) or []:
-                    link_title = link.get("title")
-                    if link_title:
-                        links.append(link_title)
+
+            # Fetch links, optionally paginating through all results
+            continue_token = None
+            max_iterations = WIKI_MAX_LINK_ITERATIONS if WIKI_PAGINATE_LINKS else 1
+            iteration = 0
+            hit_limit = False
+
+            while iteration < max_iterations:
+                iteration += 1
+                request_params = params.copy()
+
+                # Add continuation token if we have one
+                if continue_token:
+                    request_params.update(continue_token)
+
+                resp = requests.get(
+                    EXTRACT_URL,
+                    params=request_params,
+                    headers=WIKI_HEADERS,
+                    timeout=self.request_timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Extract links from response
+                pages = data.get("query", {}).get("pages", {})
+                for page in pages.values():
+                    for link in page.get("links", []) or []:
+                        link_title = link.get("title")
+                        if link_title:
+                            links.append(link_title)
+
+                # Check if there are more results
+                if not WIKI_PAGINATE_LINKS or "continue" not in data:
+                    break
+
+                continue_token = data["continue"]
+                logger.debug(
+                    "Wikipedia links pagination: fetched %d links so far, continuing...",
+                    len(links),
+                )
+
+                # Check if we hit the iteration limit
+                if iteration >= max_iterations and "continue" in data:
+                    hit_limit = True
+
+            if hit_limit:
+                logger.warning(
+                    "Wikipedia links pagination hit max iteration limit (%d) for %r; "
+                    "some links may be missing. Fetched %d links total.",
+                    max_iterations,
+                    title,
+                    len(links),
+                )
+
         except Exception as e:
             logger.warning("Wikipedia links fetch failed for %s: %s", title, e)
-            links = []
 
         self._cache_set(cache_key, links)
         logger.debug("Wikipedia links for %r produced %d links", title, len(links))
@@ -243,9 +305,7 @@ class WikipediaRetriever(Retriever):
                 scored.append((score, link_title))
 
         if not scored:
-            logger.debug(
-                "No bridge titles found from links for question: %s", question
-            )
+            logger.debug("No bridge titles found from links for question: %s", question)
             return []
 
         # Sort by score descending and keep top unique titles
