@@ -1,6 +1,7 @@
 from typing import List
 import re
 from collections import Counter
+import string
 
 
 def normalize_answer(s: str) -> str:
@@ -12,7 +13,7 @@ def normalize_answer(s: str) -> str:
         return ' '.join(text.split())
     
     def remove_punc(text):
-        exclude = set('!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~')
+        exclude = set(string.punctuation)
         return ''.join(ch for ch in text if ch not in exclude)
     
     def lower(text):

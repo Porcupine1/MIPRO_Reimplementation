@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from LMBackend import LMBackend
+from backend import LMBackend
 
 
 class GroundingHelper:
@@ -45,10 +45,11 @@ Search Query:"""
     def summarize_dataset(
         self,
         examples: List[Dict[str, Any]],
-        n_samples: int = 10
+        n_samples: int = 10,
+        batch_size: int = 5
     ) -> str:
         """
-        characterize patterns in the dataset.
+        Characterize patterns in the dataset using iterative batch process.
         
         returns a summary of:
         - question types

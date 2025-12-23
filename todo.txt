@@ -15,6 +15,7 @@ Things I've now clearly seen were implemented incorrectly:
     - dataset summary, program summary etc were all quite shallow
     - first priority, fix the mertic function used to calculate scores
     - program summary is hard coded, fix this
+    - the optimizer shoulf be program agnostic
 
 After looking at the twitter post on mipro, this what i got, and should help with implementing this correctly.
 
@@ -23,7 +24,7 @@ read code, analyze dataset and run program a few times to produce example traces
 
 1. Grounded Instruction Proposal
     1. program-aware grounding
-    2. data-aware grouding
+    2. data-aware grounding
     3. successful boostrapped program traces
     4. programming tips:
         - "don't be afraid to be creative"

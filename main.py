@@ -3,10 +3,10 @@
 Main script to run MIPRO optimization on QA program.
 """
 
-from LMBackend import LMBackend
+from backend import LMBackend
 from QADataset import QADataset
-from QAProgram import QAProgram
-from MIPROOpt import MIPROOptimizer
+from programs import QAProgram
+from optimizers import MIPROOptimizer
 from config import MODEL_NAME
 
 

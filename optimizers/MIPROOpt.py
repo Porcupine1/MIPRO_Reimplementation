@@ -1,18 +1,17 @@
-from typing import Dict, List
+from typing import Dict, List, Any, Optional
 from tqdm import tqdm
 import json
 import os
 
-from QAProgram import QAProgram
+from programs import QAProgram
 from QADataset import QADataset
-from InstrProposer import InstructionProposer
-from SurrogateOpt import SurrogateOptimizer
-from DemoBootstrapper import DemoBootstrapper
-from GroundingHelper import GroundingHelper
+from helpers import InstructionProposer, DemoBootstrapper, GroundingHelper
+from .SurrogateOpt import SurrogateOptimizer
 from metrics import compute_metrics
 from config import (
     N_TRIALS, BATCH_SIZE, N_INSTRUCTION_CANDIDATES,
-    EVAL_BATCH_SIZE, METRIC, OUTPUT_DIR
+    EVAL_BATCH_SIZE, METRIC, OUTPUT_DIR, NUM_CANDIDATES,
+    MINIBATCH_FULL_EVAL_STEPS
 )
 
 
@@ -196,26 +195,17 @@ class MIPROOptimizer:
             # Return 0.0 if no examples available
             return 0.0
         
-        # Generate predictions
-        predictions = []
-        ground_truths = []
+        # Generate predictions in parallel
+        predictions = test_program.process_batch(batch, parallel=True)
         
-        for example in tqdm(batch, desc="Evaluating", leave=False):
+        # Collect ground truths
+        ground_truths = []
+        for example in batch:
             try:
-                prediction = test_program.forward(example)
                 ground_truth = self.dataset.get_ground_truth(example)
-                
-                predictions.append(prediction)
                 ground_truths.append(ground_truth)
-            except Exception as e:
-                print(f"Error processing example: {e}")
-                # Add empty prediction to maintain alignment
-                predictions.append("")
-                # Try to get ground truth, but use empty string if it fails
-                try:
-                    ground_truths.append(self.dataset.get_ground_truth(example))
-                except Exception:
-                    ground_truths.append("")
+            except Exception:
+                ground_truths.append("")
         
         # Compute metrics
         metrics = compute_metrics(predictions, ground_truths)
@@ -246,7 +236,9 @@ class MIPROOptimizer:
     
     def get_best_instructions(self) -> Dict[str, str]:
         """get best instruction configuration"""
-        return self.best_config
+        if self.best_config and "instructions" in self.best_config:
+            return self.best_config["instructions"]
+        return {}
     
     def get_best_score(self) -> float:
         """get best score achieved"""

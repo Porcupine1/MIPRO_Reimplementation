@@ -56,24 +56,30 @@ Edit `config.py` to customize:
 
 ### Components
 
-- **`LMBackend.py`** - Ollama interface for LLM generation
+**Project Structure:**
+- **`optimizers/`** - Optimization logic
+  - `MIPROOpt.py` - Main MIPRO optimizer orchestrator
+  - `SurrogateOpt.py` - Bayesian optimization using TPE (Optuna)
+- **`programs/`** - What is being optimized
+  - `QAProgram.py` - Multi-stage QA pipeline
+  - `PromptMod.py` - Modular prompt templates (QueryModule, AnswerModule)
+- **`backend/`** - Backend services
+  - `LMBackend.py` - Ollama interface for LLM generation
+- **`helpers/`** - Helper utilities
+  - `InstrProposer.py` - Generates instruction candidates via meta-prompting
+  - `DemoBootstrapper.py` - Bootstrap demonstrations from traces
+  - `GroundingHelper.py` - Dataset and program grounding utilities
 - **`QADataset.py`** - HotpotQA dataset handler
-- **`PromptMod.py`** - Modular prompt templates (QueryModule, AnswerModule)
-- **`QAProgram.py`** - Multi-stage QA pipeline
-- **`InstrProposer.py`** - Generates instruction candidates via meta-prompting
-- **`SurrogateOpt.py`** - Bayesian optimization using TPE (Optuna)
-- **`MIPROOpt.py`** - Main orchestrator
 - **`metrics.py`** - Evaluation metrics (F1, Exact Match)
-- **`DemoBootstrapper.py`** - Bootstrap demonstrations from traces
 - **`config.py`** - Central configuration
 
 ## Usage Example
 
 ```python
-from LMBackend import LMBackend
+from backend import LMBackend
 from QADataset import QADataset
-from QAProgram import QAProgram
-from MIPROOpt import MIPROOptimizer
+from programs import QAProgram
+from optimizers import MIPROOptimizer
 
 # Load dataset
 dataset = QADataset().load()

@@ -1,8 +1,8 @@
 from typing import List, Dict, Any, Optional
-from LMBackend import LMBackend
-from GroundingHelper import GroundingHelper
+from backend import LMBackend
+from .GroundingHelper import GroundingHelper
 from config import N_INSTRUCTION_CANDIDATES
-from QAProgram import QAProgram
+from programs import QAProgram
 
 
 class InstructionProposer:

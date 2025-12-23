@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 import copy
-from LMBackend import LMBackend
+from backend import LMBackend
 
 
 class PromptModule:
@@ -24,7 +24,12 @@ class PromptModule:
         raise NotImplementedError
     
     def forward(self, **inputs) -> str:
-        """generate output by building prompt and calling LM"""
+        """
+        generate output by building prompt and calling LM
+        
+        Args:
+            **inputs: Input arguments for the module
+        """
 
         prompt = self.build_prompt(**inputs)
         output = self.lm.generate(prompt)
@@ -68,8 +73,18 @@ class QueryModule(PromptModule):
         
         # add demos
         for demo in self.demos:
-            parts.append(f"Question: {demo['question']}")
-            parts.append(f"Search Query: {demo['query']}\n")
+            # Handle both trace format and flat format
+            if "input" in demo:
+                # Trace format: {"module": "...", "input": {"question": "..."}, "output": "..."}
+                demo_question = demo["input"].get("question", "")
+                demo_query = demo.get("output", "")
+            else:
+                # Flat format: {"question": "...", "query": "..."} or {"question": "...", "output": "..."}
+                demo_question = demo.get("question", "")
+                demo_query = demo.get("query") or demo.get("output", "")
+            
+            parts.append(f"Question: {demo_question}")
+            parts.append(f"Search Query: {demo_query}\n")
         
         # add current input
         parts.append(f"Question: {question}")
@@ -102,9 +117,21 @@ class AnswerModule(PromptModule):
         
         # add demos
         for demo in self.demos:
-            parts.append(f"Question: {demo['question']}")
-            parts.append(f"Context: {demo.get('context', '')}")
-            parts.append(f"Answer: {demo['answer']}\n")
+            # Handle both trace format and flat format
+            if "input" in demo:
+                # Trace format: {"module": "...", "input": {"question": "...", "context": "..."}, "output": "..."}
+                demo_question = demo["input"].get("question", "")
+                demo_context = demo["input"].get("context", "")
+                demo_answer = demo.get("output", "")
+            else:
+                # Flat format: {"question": "...", "context": "...", "answer": "..."} or {"question": "...", "context": "...", "output": "..."}
+                demo_question = demo.get("question", "")
+                demo_context = demo.get("context", "")
+                demo_answer = demo.get("answer") or demo.get("output", "")
+            
+            parts.append(f"Question: {demo_question}")
+            parts.append(f"Context: {demo_context}")
+            parts.append(f"Answer: {demo_answer}\n")
         
         # add current input
         parts.append(f"Question: {question}")
