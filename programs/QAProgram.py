@@ -294,9 +294,27 @@ class QAProgram:
     def clone(self) -> "QAProgram":
         """create a copy of this program"""
 
-        cloned_modules = {name: module.clone() for name, module in self.modules.items()}
+        # Create a NEW backend instance for thread safety
+        # Each clone needs its own LMBackend to avoid race conditions in parallel execution
+        cloned_backend = LMBackend(
+            model_name=self.backend.model_name,
+            base_url=self.backend.base_url,
+            temperature=self.backend.temperature,
+            max_tokens=self.backend.max_tokens,
+            max_workers=self.backend.max_workers,
+            request_timeout=self.backend.request_timeout,
+        )
+        
+        # Clone modules with the new backend
+        cloned_modules = {}
+        for name, module in self.modules.items():
+            cloned_module = module.clone()
+            # Update the module to use the new backend
+            cloned_module.lm = cloned_backend
+            cloned_modules[name] = cloned_module
+        
         cloned = QAProgram(
-            backend=self.backend,
+            backend=cloned_backend,
             modules=cloned_modules,
             retriever=self.retriever,
             selector=self.selector,

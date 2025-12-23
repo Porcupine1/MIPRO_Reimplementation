@@ -490,9 +490,9 @@ class SurrogateOptimizer:
     ) -> None:
         """Log trial progress with current standings."""
         if eval_type == "minibatch":
-            progress_pct = (trial_number + 1) / self.num_trials * 100
+            progress_pct = trial_number / self.num_trials * 100
             logger.info(
-                f"  Progress: {trial_number + 1}/{self.num_trials} ({progress_pct:.1f}%) | "
+                f"  Progress: {trial_number}/{self.num_trials} ({progress_pct:.1f}%) | "
                 f"Current: {score:.4f} | Best: {self.best_score:.4f}"
             )
         else:

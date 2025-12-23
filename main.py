@@ -11,14 +11,9 @@ from backend import LMBackend
 from QADataset import QADataset
 from programs import QAProgram
 from optimizers import MIPROOptimizer
-from config import MODEL_NAME, OUTPUT_DIR, TASK_DESCRIPTION, get_tier_config, apply_tier, print_tier_info, get_active_config
+from config import MODEL_NAME, OUTPUT_DIR, TASK_DESCRIPTION, get_tier_config, apply_tier, print_tier_info
 from logging_config import setup_logging
-from cache.candidate_cache import (
-    cache_exists,
-    save_demo_candidates,
-    save_instruction_candidates,
-)
-from helpers import DemoBootstrapper, InstructionProposer
+from cache.candidate_cache import cache_exists
 
 
 logger = logging.getLogger(__name__)
@@ -37,15 +32,15 @@ Configuration Tiers:
 
 Caching Options:
   --use-cache                # Use cached demos AND instructions (fastest)
-                             # If cache not found, will auto-generate
+                             # If cache not found, will auto-generate and save
   --use-cached-demos         # Use only cached demo candidates
   --use-cached-instructions  # Use only cached instruction candidates
   --check-cache              # Check if cache files exist
   
-  Note: If cache is requested but not found, main.py will automatically
-        generate and save the missing cache files before optimization.
+  Note: If cache is requested but not found, MIPROOptimizer will automatically
+        generate and save the missing cache files during optimization.
   
-  To pre-generate cache files manually:
+  To pre-generate cache files manually (optional):
     python -m cmd.test_bootstrapper    # Generate demo cache
     python -m cmd.test_instr_proposer  # Generate instruction cache
 
@@ -115,26 +110,9 @@ Examples:
     # Apply the selected tier
     tier_config = apply_tier(args.tier)
 
-    # Handle cache flags
+    # Handle cache flags - MIPROOptimizer will handle loading/generation
     use_cached_demos = args.use_cache or args.use_cached_demos
     use_cached_instructions = args.use_cache or args.use_cached_instructions
-
-    # Check if cache is requested but doesn't exist - generate if needed
-    need_to_generate_demos = False
-    need_to_generate_instructions = False
-    
-    if use_cached_demos or use_cached_instructions:
-        cache_status = cache_exists()
-        if use_cached_demos and not cache_status['demos']:
-            logger.warning(
-                "Demo cache requested but not found. Will generate demo cache..."
-            )
-            need_to_generate_demos = True
-        if use_cached_instructions and not cache_status['instructions']:
-            logger.warning(
-                "Instruction cache requested but not found. Will generate instruction cache..."
-            )
-            need_to_generate_instructions = True
 
     # Ensure output directory exists and configure logging to both console and file
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -170,78 +148,6 @@ Examples:
     backend = LMBackend()
     program = QAProgram(backend=backend)
     logger.info("  Modules: %s", program.get_module_names())
-
-    # 2.5. Generate cache if needed (before optimization)
-    if need_to_generate_demos or need_to_generate_instructions:
-        logger.info("[2.5/4] Generating requested cache files...")
-        
-        # Get training data for cache generation
-        train_data = dataset.get_split(split="train")
-        if not train_data:
-            logger.error("Cannot generate cache: No training data available")
-            return
-        
-        # Get module names for consistent indexing
-        module_names = sorted(program.get_module_names())
-        
-        # Generate demo cache if needed
-        demo_candidates = None
-        if need_to_generate_demos:
-            logger.info("  Generating demo candidates cache...")
-            cfg = get_active_config()
-            bootstrapper = DemoBootstrapper(program=program, dataset=dataset)
-            demo_candidates = bootstrapper.bootstrap_candidates(
-                num_candidates=cfg.num_candidates,
-                train_data=train_data,
-                module_names=module_names,
-            )
-            # Save to cache
-            metadata = {
-                "tier": args.tier,
-                "num_candidates": cfg.num_candidates,
-                "max_bootstrapped_demos": cfg.max_bootstrapped_demos,
-                "max_labeled_demos": cfg.max_labeled_demos,
-            }
-            save_demo_candidates(demo_candidates, metadata=metadata)
-            logger.info("  ✓ Demo candidates cache generated and saved!")
-        
-        # Generate instruction cache if needed
-        if need_to_generate_instructions:
-            logger.info("  Generating instruction candidates cache...")
-            cfg = get_active_config()
-            
-            # Load demo candidates if available (for instruction generation)
-            if demo_candidates is None and cache_status.get('demos'):
-                from cache.candidate_cache import load_demo_candidates
-                demo_candidates = load_demo_candidates()
-            
-            # If still no demos, generate empty demo sets
-            if demo_candidates is None:
-                demo_candidates = {
-                    idx: [[]]  # Empty demo set for each predictor
-                    for idx in range(len(module_names))
-                }
-            
-            # Initialize InstructionProposer (handles grounding internally)
-            proposer = InstructionProposer(train_examples=train_data, program=program)
-            
-            # Generate instruction candidates
-            instruction_candidates = proposer.propose_for_all_modules(
-                program=program,
-                task_desc=TASK_DESCRIPTION,
-                bootstrapped_demos=demo_candidates,
-                n_candidates=cfg.n_instruction_candidates,
-                program_aware=True,
-                module_names=module_names,
-            )
-            
-            # Save to cache
-            metadata = {
-                "tier": args.tier,
-                "n_instruction_candidates": cfg.n_instruction_candidates,
-            }
-            save_instruction_candidates(instruction_candidates, metadata=metadata)
-            logger.info("  Instruction candidates cache generated and saved!")
 
     # 3. Test baseline (optional)
     logger.info("[3/4] Testing baseline program...")

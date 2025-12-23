@@ -16,7 +16,8 @@ from config import (
 from cache.candidate_cache import (
     load_demo_candidates,
     load_instruction_candidates,
-    cache_exists,
+    save_demo_candidates,
+    save_instruction_candidates,
 )
 
 
@@ -151,6 +152,15 @@ class MIPROOptimizer:
                     for idx, sets in demo_candidates.items()
                 },
             )
+            # Save to cache for future use
+            metadata = {
+                "num_candidates": cfg.num_candidates,
+                "max_bootstrapped_demos": cfg.max_bootstrapped_demos,
+                "max_labeled_demos": cfg.max_labeled_demos,
+                "num_train_examples": len(train_data),
+            }
+            save_demo_candidates(demo_candidates, metadata=metadata)
+            logger.info("  ✓ Demo candidates saved to cache")
 
         # Step 2: Propose Instruction Candidates
         logger.info("[Step 2/3] Proposing instruction candidates...")
@@ -174,7 +184,7 @@ class MIPROOptimizer:
                 task_desc=task_description,
                 bootstrapped_demos=demo_candidates,
                 n_candidates=self.n_instruction_candidates,
-                program_aware=True,
+                program_aware=False,  # Disabled: prevents code/implementation from being included in instructions
                 module_names=self.module_names,
             )
 
@@ -188,6 +198,14 @@ class MIPROOptimizer:
                     len(candidates),
                     len(candidates) - 1,
                 )
+            
+            # Save to cache for future use
+            metadata = {
+                "n_instruction_candidates": self.n_instruction_candidates,
+                "num_train_examples": len(train_data),
+            }
+            save_instruction_candidates(self.instruction_candidates, metadata=metadata)
+            logger.info("  ✓ Instruction candidates saved to cache")
 
         # Step 3: Bayesian optimization over instruction + demo space
         logger.info(
