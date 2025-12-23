@@ -39,17 +39,17 @@ MAX_CONTEXT_CHARS = (
 
 # dataset configuration
 DATA_DIR = "data/hotpotqa"
-MAX_EXAMPLES = 1000  # maximum total examples to use (80% train, 20% validation)
+# MAX_EXAMPLES: Now in TierConfig (tier-specific)
 
 # retrieval configuration
 RETRIEVER = "wiki_online"  # "hotpot_local" | "wiki_online" | "mock"
 HOPS = 2
-TOP_TITLES_HOP1 = 4
-TOP_TITLES_HOP2 = 4
+# TOP_TITLES_HOP1: Now in TierConfig (tier-specific)
+# TOP_TITLES_HOP2: Now in TierConfig (tier-specific)
 MAX_WIKI_TITLES_TOTAL = (
     10  # Increased to allow hop-2 titles (was 4, which blocked 2-hop retrieval)
 )
-TOP_SENTS_TOTAL = 10
+# TOP_SENTS_TOTAL: Now in TierConfig (tier-specific)
 MAX_SENTS_PER_TITLE = 3
 CACHE_DIR = "cache"
 CACHE_TTL_HOURS = 72
@@ -66,23 +66,21 @@ WIKI_MAX_LINK_ITERATIONS = (
     10  # Max pagination iterations when fetching links (prevents infinite loops)
 )
 
-# optimization parameters
-N_TRIALS = 20
-BATCH_SIZE = 35  # minibatch size for evaluation (random samples from train)
-EVAL_BATCH_SIZE = (
-    100  # full evaluation batch size (deterministic samples from validation)
-)
-N_INSTRUCTION_CANDIDATES = 10
-MINIBATCH_FULL_EVAL_STEPS = 10  # do full eval every N minibatches
+# optimization parameters (tier-specific values now in TierConfig)
+# N_TRIALS: Now in TierConfig
+# BATCH_SIZE: Now in TierConfig
+# EVAL_BATCH_SIZE: Now in TierConfig
+# N_INSTRUCTION_CANDIDATES: Now in TierConfig
+# MINIBATCH_FULL_EVAL_STEPS: Now in TierConfig
 
 # NOTE: Validation evaluation now uses deterministic sampling (fixed seed) to reduce noise.
 # Training minibatch eval still uses random sampling for diversity. Validation scores
 # should be more consistent across trials, though minibatch train scores will still vary.
 
-# bootstrap parameters
-NUM_CANDIDATES = 30  # number of candidate demo sets to create
-MAX_BOOTSTRAPPED_DEMOS = 4  # max bootstrapped demos per set
-MAX_LABELED_DEMOS = 2  # max labeled demos per set (sampled from training)
+# bootstrap parameters (tier-specific values now in TierConfig)
+# NUM_CANDIDATES: Now in TierConfig
+# MAX_BOOTSTRAPPED_DEMOS: Now in TierConfig
+# MAX_LABELED_DEMOS: Now in TierConfig
 BOOTSTRAP_THRESHOLD = 0.4  # minimum score to keep a bootstrapped demo (lowered for exact_match compatibility)
 MIN_CONTEXT_CHARS = 1  # minimum context length to accept bootstrapped answer demo
 USE_RETRIEVER_CACHE = True  # use persistent caching for retrieval results
@@ -210,6 +208,9 @@ TIER_CONFIGS: Dict[ConfigTier, TierConfig] = {
     ConfigTier.HEAVY: HEAVY_CONFIG,
 }
 
+# Active tier configuration (set by apply_tier())
+ACTIVE_TIER_CONFIG: TierConfig = HEAVY_CONFIG  # Default to heavy
+
 
 # ============================================================================
 # TIER MANAGEMENT FUNCTIONS
@@ -246,7 +247,7 @@ def get_tier_config(tier: Union[ConfigTier, str] = ConfigTier.LIGHT) -> TierConf
 
 def apply_tier(tier: Union[ConfigTier, str]) -> TierConfig:
     """
-    Apply tier settings to the config module (modifies module globals).
+    Apply tier settings to the config module (sets ACTIVE_TIER_CONFIG).
 
     Args:
         tier: Configuration tier to apply
@@ -264,30 +265,31 @@ def apply_tier(tier: Union[ConfigTier, str]) -> TierConfig:
     tier_config = get_tier_config(tier)
     module = sys.modules[__name__]
 
-    # Update module variables
-    module.N_TRIALS = tier_config.n_trials
-    module.BATCH_SIZE = tier_config.batch_size
-    module.EVAL_BATCH_SIZE = tier_config.eval_batch_size
-    module.N_INSTRUCTION_CANDIDATES = tier_config.n_instruction_candidates
-    module.MINIBATCH_FULL_EVAL_STEPS = tier_config.minibatch_full_eval_steps
-
-    module.NUM_CANDIDATES = tier_config.num_candidates
-    module.MAX_BOOTSTRAPPED_DEMOS = tier_config.max_bootstrapped_demos
-    module.MAX_LABELED_DEMOS = tier_config.max_labeled_demos
-
-    module.MAX_EXAMPLES = tier_config.max_examples
-
-    module.TOP_TITLES_HOP1 = tier_config.top_titles_hop1
-    module.TOP_TITLES_HOP2 = tier_config.top_titles_hop2
-    module.TOP_SENTS_TOTAL = tier_config.top_sents_total
+    # Set the active tier configuration
+    module.ACTIVE_TIER_CONFIG = tier_config
 
     tier_name = tier if isinstance(tier, str) else tier.value
     print(f"Applied {tier_name.upper()} configuration")
     print(
-        f"  Trials: {module.N_TRIALS}, Batch: {module.BATCH_SIZE}, Examples: {module.MAX_EXAMPLES}"
+        f"  Trials: {tier_config.n_trials}, Batch: {tier_config.batch_size}, Examples: {tier_config.max_examples}"
     )
 
     return tier_config
+
+
+def get_active_config() -> TierConfig:
+    """
+    Get the currently active tier configuration.
+
+    Returns:
+        The active TierConfig instance
+
+    Example:
+        >>> from config import get_active_config
+        >>> cfg = get_active_config()
+        >>> print(f"Using {cfg.n_trials} trials")
+    """
+    return ACTIVE_TIER_CONFIG
 
 
 def list_tiers() -> Dict[str, Dict[str, Any]]:
@@ -334,32 +336,52 @@ def print_tier_info() -> None:
 
 @dataclass
 class MIPROConfig:
-    """Configuration for MIPRO optimization (dataclass wrapper)."""
+    """Configuration for MIPRO optimization (dataclass wrapper - legacy compatibility)."""
 
     # model config
-    model_name: str = MODEL_NAME
-    ollama_base_url: str = OLLAMA_BASE_URL
-    temperature: float = TEMPERATURE
-    max_tokens: int = MAX_TOKENS
+    model_name: str
+    ollama_base_url: str
+    temperature: float
+    max_tokens: int
 
     # dataset config
-    data_dir: str = DATA_DIR
+    data_dir: str
 
-    # optimization params
-    n_trials: int = N_TRIALS
-    batch_size: int = BATCH_SIZE
-    n_instruction_candidates: int = N_INSTRUCTION_CANDIDATES
-    eval_batch_size: int = EVAL_BATCH_SIZE
+    # optimization params (from tier config)
+    n_trials: int
+    batch_size: int
+    n_instruction_candidates: int
+    eval_batch_size: int
 
     # surrogate optimizer (TPE) params
-    n_startup_trials: int = N_STARTUP_TRIALS
+    n_startup_trials: int
 
     # metric
-    metric: str = METRIC
+    metric: str
 
     # paths
-    output_dir: str = OUTPUT_DIR
-    checkpoint_dir: str = CHECKPOINT_DIR
+    output_dir: str
+    checkpoint_dir: str
+
+    @classmethod
+    def from_active_config(cls) -> "MIPROConfig":
+        """Create MIPROConfig from the currently active tier configuration."""
+        cfg = get_active_config()
+        return cls(
+            model_name=MODEL_NAME,
+            ollama_base_url=OLLAMA_BASE_URL,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            data_dir=DATA_DIR,
+            n_trials=cfg.n_trials,
+            batch_size=cfg.batch_size,
+            n_instruction_candidates=cfg.n_instruction_candidates,
+            eval_batch_size=cfg.eval_batch_size,
+            n_startup_trials=N_STARTUP_TRIALS,
+            metric=METRIC,
+            output_dir=OUTPUT_DIR,
+            checkpoint_dir=CHECKPOINT_DIR,
+        )
 
     @classmethod
     def from_yaml(cls, path: str) -> "MIPROConfig":

@@ -4,11 +4,9 @@ from programs import QAProgram
 from QADataset import QADataset
 from metrics import f1_score, exact_match
 from config import (
-    NUM_CANDIDATES,
-    MAX_BOOTSTRAPPED_DEMOS,
-    MAX_LABELED_DEMOS,
     BOOTSTRAP_THRESHOLD,
     MIN_CONTEXT_CHARS,
+    get_active_config,
 )
 
 
@@ -111,14 +109,20 @@ class DemoBootstrapper:
 
     def bootstrap_candidates(
         self,
-        num_candidates: int = NUM_CANDIDATES,
-        max_bootstrapped_demos: int = MAX_BOOTSTRAPPED_DEMOS,
-        max_labeled_demos: int = MAX_LABELED_DEMOS,
+        num_candidates: int = None,
+        max_bootstrapped_demos: int = None,
+        max_labeled_demos: int = None,
         train_data: Optional[Any] = None,
         module_names: Optional[List[str]] = None,
+        min_num_samples: int = 1,
     ) -> Dict[int, List[List[Dict[str, Any]]]]:
         """
         Bootstrap candidate demo sets for each module.
+        
+        Args:
+            num_candidates: Number of bootstrapped sets (defaults to tier config)
+            max_bootstrapped_demos: Max bootstrapped demos per set (defaults to tier config)
+            max_labeled_demos: Max labeled demos per set (defaults to tier config)
 
         Always creates 2 baseline sets (zero-shot + labeled-only), then num_candidates
         additional sets with bootstrapped demos.
@@ -134,10 +138,20 @@ class DemoBootstrapper:
             max_labeled_demos: Maximum labeled demos per set (used in baseline and mixed sets)
             train_data: Optional training split to use. If None, uses dataset's train split.
             module_names: Optional sorted list of module names. If None, sorts program modules.
+            min_num_samples: Minimum number of bootstrapped demos for shuffled candidates
 
         Returns:
             Dict mapping module_name -> list of candidate demo sets (total: num_candidates + 2)
         """
+        # Resolve default values from active tier config
+        cfg = get_active_config()
+        if num_candidates is None:
+            num_candidates = cfg.num_candidates
+        if max_bootstrapped_demos is None:
+            max_bootstrapped_demos = cfg.max_bootstrapped_demos
+        if max_labeled_demos is None:
+            max_labeled_demos = cfg.max_labeled_demos
+        
         # Resolve training data source
         if train_data is None:
             # Prefer a dedicated accessor if available
@@ -170,91 +184,131 @@ class DemoBootstrapper:
             max_labeled_demos,
         )
 
-        # Step 1: Collect bootstrapped demos by iterating through training examples
-        logger.info("Collecting bootstrapped demos from %d examples...", max_examples)
         # Use provided module order or sort once if not provided
         if module_names is None:
             module_names = sorted(self.program.get_module_names())
-        bootstrapped_demos = {module: [] for module in module_names}
 
-        for example in train_data:
-            if examples_tried >= max_examples:
-                break
+        # Helper function to bootstrap demos from training data
+        def _bootstrap_from_data(
+            data_order: List[Any], target_num_demos: int
+        ) -> Dict[str, List[Dict[str, Any]]]:
+            """Bootstrap demos from training data in specified order."""
+            demos = {module: [] for module in module_names}
+            examples_seen = 0
 
-            # Check if we have enough demos for all modules
-            if all(
-                len(bootstrapped_demos[module]) >= max_bootstrapped_demos
-                for module in module_names
-            ):
-                break
+            for example in data_order:
+                if examples_seen >= max_examples:
+                    break
 
-            examples_tried += 1
-            try:
-                module_traces, score = self._run_and_score(example)
+                # Check if we have enough demos for all modules
+                if all(len(demos[module]) >= target_num_demos for module in module_names):
+                    break
 
-                # If successful, extract module demos from trace
-                if score >= self.threshold:
-                    for trace_entry in module_traces:
-                        module_name = trace_entry["module"]
-                        if module_name in bootstrapped_demos:
-                            # Only add if we haven't reached max for this module
-                            if (
-                                len(bootstrapped_demos[module_name])
-                                < max_bootstrapped_demos
-                            ):
-                                # Apply generic grounding checks
-                                if not self._check_grounding(trace_entry):
-                                    continue
+                examples_seen += 1
+                try:
+                    module_traces, score = self._run_and_score(example)
 
-                                # Store demo in consistent trace format with score
-                                demo = {**trace_entry, "score": score}
-                                bootstrapped_demos[module_name].append(demo)
+                    # If successful, extract module demos from trace
+                    if score >= self.threshold:
+                        for trace_entry in module_traces:
+                            module_name = trace_entry["module"]
+                            if module_name in demos:
+                                # Only add if we haven't reached max for this module
+                                if len(demos[module_name]) < target_num_demos:
+                                    # Apply generic grounding checks
+                                    if not self._check_grounding(trace_entry):
+                                        continue
 
-                                # Log accepted demo
-                                trace_input = trace_entry.get("input", {})
-                                if module_name == "answer":
-                                    context = trace_input.get("context", "")
-                                    context_len = len(context)
-                                    logger.info(
-                                        "Accepted bootstrapped demo: module=%s, score=%.3f, context_len=%d",
-                                        module_name,
-                                        score,
-                                        context_len,
-                                    )
-                                else:
-                                    logger.info(
-                                        "Accepted bootstrapped demo: module=%s, score=%.3f",
-                                        module_name,
-                                        score,
-                                    )
-            except Exception as e:
-                logger.warning(
-                    "Error while bootstrapping example %d: %s", examples_tried, e
-                )
-                continue
+                                    # Store demo in consistent trace format with score
+                                    demo = {**trace_entry, "score": score}
+                                    demos[module_name].append(demo)
 
-        # Sort by score
-        for module_name in bootstrapped_demos:
-            bootstrapped_demos[module_name].sort(
-                key=lambda x: x.get("score", 0), reverse=True
-            )
+                                    # Log accepted demo
+                                    trace_input = trace_entry.get("input", {})
+                                    if module_name == "answer":
+                                        context = trace_input.get("context", "")
+                                        context_len = len(context)
+                                        logger.info(
+                                            "Accepted bootstrapped demo: module=%s, score=%.3f, context_len=%d",
+                                            module_name,
+                                            score,
+                                            context_len,
+                                        )
+                                    else:
+                                        logger.info(
+                                            "Accepted bootstrapped demo: module=%s, score=%.3f",
+                                            module_name,
+                                            score,
+                                        )
+                except Exception as e:
+                    logger.warning(
+                        "Error while bootstrapping example %d: %s", examples_seen, e
+                    )
+                    continue
+
+            # Sort by score
+            for module_name in demos:
+                demos[module_name].sort(key=lambda x: x.get("score", 0), reverse=True)
+
+            return demos
+
+        # Step 1a: Create canonical unshuffled bootstrapped demos
+        logger.info(
+            "Collecting UNSHUFFLED canonical bootstrapped demos from %d examples (fixed: %d demos)...",
+            max_examples,
+            max_bootstrapped_demos,
+        )
+        train_data_list = list(train_data)
+        unshuffled_bootstrapped = _bootstrap_from_data(
+            train_data_list, max_bootstrapped_demos
+        )
+        for module_name in module_names:
             logger.info(
-                "Module '%s': %d bootstrapped demos collected",
+                "Module '%s': %d unshuffled bootstrapped demos collected",
                 module_name,
-                len(bootstrapped_demos[module_name]),
+                len(unshuffled_bootstrapped[module_name]),
             )
+
+        # Step 1b: Create shuffled bootstrapped demo sets
+        import random
+
+        shuffled_bootstrapped_sets = []
+        for i in range(num_candidates - 1):  # -1 because first candidate is unshuffled
+            # Randomly determine number of demos for this shuffled set
+            target_demos = random.randint(min_num_samples, max_bootstrapped_demos)
+            logger.info(
+                "Collecting SHUFFLED bootstrapped demos set %d from shuffled training data (target: %d demos)...",
+                i + 1,
+                target_demos,
+            )
+
+            # Shuffle training data order
+            shuffled_data = train_data_list.copy()
+            random.shuffle(shuffled_data)
+
+            # Bootstrap from shuffled data
+            shuffled_demos = _bootstrap_from_data(shuffled_data, target_demos)
+            shuffled_bootstrapped_sets.append(shuffled_demos)
+
+            for module_name in module_names:
+                logger.info(
+                    "Module '%s': %d shuffled bootstrapped demos collected (set %d)",
+                    module_name,
+                    len(shuffled_demos[module_name]),
+                    i + 1,
+                )
 
         # Step 2: Collect labeled demos (ground-truth input-output pairs from training set)
         logger.info("Collecting labeled demos...")
         labeled_demos = {module: [] for module in module_names}
 
         # Sample labeled examples directly from the provided training data
-        import random
-
-        n_labeled_source = min(50, max_examples)
+        # Use a reasonable fraction of available examples for labeled demos
+        # (capped at 50 to avoid excessive processing time)
+        n_labeled_source = min(50, max_examples, len(train_data_list))
         if n_labeled_source > 0:
-            labeled_indices = random.sample(range(max_examples), n_labeled_source)
-            labeled_examples = [train_data[i] for i in labeled_indices]
+            labeled_indices = random.sample(range(len(train_data_list)), n_labeled_source)
+            labeled_examples = [train_data_list[i] for i in labeled_indices]
         else:
             labeled_examples = []
 
@@ -292,8 +346,8 @@ class DemoBootstrapper:
         demo_candidates = {module: [] for module in module_names}
 
         for module_name in module_names:
-            bootstrapped = bootstrapped_demos[module_name]
             labeled = labeled_demos[module_name]
+            unshuffled = unshuffled_bootstrapped[module_name]
 
             # Always include set 0 (zero-shot) and set 1 (labeled-only) as baselines
             # These don't count toward num_candidates
@@ -306,43 +360,30 @@ class DemoBootstrapper:
 
             # Now create num_candidates additional sets with bootstrapped demos
             for i in range(num_candidates):
-                candidate_set = []
-
-                # First candidate: Bootstrapped only (unshuffled)
+                # First candidate: Unshuffled canonical bootstrapped demos
                 if i == 0:
-                    candidate_set = bootstrapped[:max_bootstrapped_demos]
+                    candidate_set = unshuffled.copy()
 
-                # Second candidate: Bootstrapped only (shuffled)
-                elif i == 1:
-                    candidate_set = bootstrapped[:max_bootstrapped_demos].copy()
-                    random.shuffle(candidate_set)
-
-                # Remaining candidates: Mixed (bootstrapped + labeled)
+                # Remaining candidates: Shuffled bootstrapped demos
                 else:
-                    # Sample bootstrapped demos
-                    n_bootstrapped = min(max_bootstrapped_demos, len(bootstrapped))
-                    n_labeled = min(max_labeled_demos, len(labeled))
-
-                    if n_bootstrapped > 0:
-                        sampled_bootstrapped = random.sample(
-                            bootstrapped, n_bootstrapped
-                        )
-                        candidate_set.extend(sampled_bootstrapped)
-
-                    if n_labeled > 0:
-                        sampled_labeled = random.sample(labeled, n_labeled)
-                        candidate_set.extend(sampled_labeled)
-
-                    # Shuffle mixed set
-                    random.shuffle(candidate_set)
+                    shuffled_idx = i - 1
+                    if shuffled_idx < len(shuffled_bootstrapped_sets):
+                        shuffled_demos = shuffled_bootstrapped_sets[shuffled_idx][
+                            module_name
+                        ]
+                        candidate_set = shuffled_demos.copy()
+                    else:
+                        # Fallback: empty set if we somehow don't have enough shuffled sets
+                        candidate_set = []
 
                 demo_candidates[module_name].append(candidate_set)
 
             logger.info(
-                "Module '%s': %d candidate demo sets created (2 baselines + %d bootstrapped)",
+                "Module '%s': %d candidate demo sets created (2 baselines + %d bootstrapped: 1 unshuffled + %d shuffled)",
                 module_name,
                 len(demo_candidates[module_name]),
                 num_candidates,
+                num_candidates - 1,
             )
 
         logger.info(

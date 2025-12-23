@@ -1,40 +1,44 @@
-from datasets import load_from_disk, concatenate_datasets
+from datasets import load_from_disk
 from typing import List, Dict, Any
 import random
-import config  # Import module instead of specific values
+from config import DATA_DIR, get_active_config
 
 
 class QADataset:
     """handler for HotpotQA dataset."""
 
     def __init__(self, data_dir: str = None, max_examples: int = None):
-        # Read from config module at runtime (after tier may be applied)
-        self.data_dir = data_dir if data_dir is not None else config.DATA_DIR
+        # Read from active tier config at runtime (after tier has been applied)
+        self.data_dir = data_dir if data_dir is not None else DATA_DIR
         self.max_examples = (
-            max_examples if max_examples is not None else config.MAX_EXAMPLES
+            max_examples if max_examples is not None else get_active_config().max_examples
         )
         self.dataset = None
         self.train = None
         self.validation = None
 
     def load(self):
-        """load dataset from disk and split according to max_examples (80% train, 20% validation)."""
+        """load dataset from disk and sample according to max_examples (80% from train, 20% from validation)."""
 
         self.dataset = load_from_disk(self.data_dir)
         original_train = self.dataset["train"]
         original_validation = self.dataset["validation"]
 
-        # Combine train and validation datasets
-        combined = concatenate_datasets([original_train, original_validation])
+        # Calculate target sizes: 80% train, 20% validation
+        train_size = int(self.max_examples * 0.8)
+        val_size = self.max_examples - train_size  # Remaining 20%
 
-        # Sample max_examples total (or use all if max_examples is larger)
-        if len(combined) > self.max_examples:
-            combined = combined.shuffle(seed=42).select(range(self.max_examples))
+        # Sample from original train split (shuffle for variety)
+        if len(original_train) > train_size:
+            self.train = original_train.shuffle(seed=42).select(range(train_size))
+        else:
+            self.train = original_train
 
-        # Split 80% train, 20% validation
-        train_size = int(len(combined) * 0.8)
-        self.train = combined.select(range(train_size))
-        self.validation = combined.select(range(train_size, len(combined)))
+        # Sample from original validation split (shuffle for variety)
+        if len(original_validation) > val_size:
+            self.validation = original_validation.shuffle(seed=42).select(range(val_size))
+        else:
+            self.validation = original_validation
 
         return self
 

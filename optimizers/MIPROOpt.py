@@ -9,15 +9,9 @@ from helpers import InstructionProposer, DemoBootstrapper, GroundingHelper
 from .SurrogateOpt import SurrogateOptimizer
 from metrics import compute_metrics
 from config import (
-    N_TRIALS,
-    BATCH_SIZE,
-    N_INSTRUCTION_CANDIDATES,
-    EVAL_BATCH_SIZE,
     METRIC,
     OUTPUT_DIR,
-    NUM_CANDIDATES,
-    MINIBATCH_FULL_EVAL_STEPS,
-    MAX_EXAMPLES,
+    get_active_config,
 )
 
 
@@ -31,32 +25,35 @@ class MIPROOptimizer:
         self,
         program: QAProgram,
         dataset: QADataset,
-        metric: str = METRIC,
-        n_trials: int = N_TRIALS,
-        batch_size: int = BATCH_SIZE,
-        eval_batch_size: int = EVAL_BATCH_SIZE,
-        n_instruction_candidates: int = N_INSTRUCTION_CANDIDATES,
-        output_dir: str = OUTPUT_DIR,
+        metric: str = None,
+        n_trials: int = None,
+        batch_size: int = None,
+        eval_batch_size: int = None,
+        n_instruction_candidates: int = None,
+        output_dir: str = None,
     ):
         """
         args:
             program: QA program to optimize
             dataset: dataset for optimization
-            metric: metric to optimize ('f1' or 'exact_match')
-            n_trials: number of Bayesian optimization trials
-            batch_size: mini-batch size for evaluation
-            eval_batch_size: batch size for final evaluation
-            n_instruction_candidates: number of instruction candidates per module
-            output_dir: directory to save results
+            metric: metric to optimize ('f1' or 'exact_match') - defaults to config.METRIC
+            n_trials: number of Bayesian optimization trials - defaults to tier config
+            batch_size: mini-batch size for evaluation - defaults to tier config
+            eval_batch_size: batch size for final evaluation - defaults to tier config
+            n_instruction_candidates: number of instruction candidates per module - defaults to tier config
+            output_dir: directory to save results - defaults to config.OUTPUT_DIR
         """
+        # Resolve defaults from active tier config
+        cfg = get_active_config()
+        
         self.program = program
         self.dataset = dataset
-        self.metric = metric
-        self.n_trials = n_trials
-        self.batch_size = batch_size
-        self.eval_batch_size = eval_batch_size
-        self.n_instruction_candidates = n_instruction_candidates
-        self.output_dir = output_dir
+        self.metric = metric if metric is not None else METRIC
+        self.n_trials = n_trials if n_trials is not None else cfg.n_trials
+        self.batch_size = batch_size if batch_size is not None else cfg.batch_size
+        self.eval_batch_size = eval_batch_size if eval_batch_size is not None else cfg.eval_batch_size
+        self.n_instruction_candidates = n_instruction_candidates if n_instruction_candidates is not None else cfg.n_instruction_candidates
+        self.output_dir = output_dir if output_dir is not None else OUTPUT_DIR
 
         # components - will be initialized in optimize() with training data
         self.proposer = None
@@ -106,14 +103,8 @@ class MIPROOptimizer:
         train_data = self.dataset.get_split(split="train")
         if not train_data:
             raise ValueError("Cannot optimize: No training data available")
-        # Limit train/validation to configured max_examples to keep search fast
-        if len(train_data) > MAX_EXAMPLES:
-            train_data = train_data.shuffle(seed=42).select(range(MAX_EXAMPLES))
-            self.dataset.train = train_data
+        # Note: Dataset is already limited by MAX_EXAMPLES in QADataset.load()
         val_data = self.dataset.get_split(split="validation")
-        if val_data is not None and len(val_data) > MAX_EXAMPLES:
-            val_data = val_data.shuffle(seed=42).select(range(MAX_EXAMPLES))
-            self.dataset.validation = val_data
 
         # Initialize GroundingHelper with training data and program (generates summaries)
         self.grounding = GroundingHelper(
@@ -127,8 +118,9 @@ class MIPROOptimizer:
 
         # Step 1: Bootstrap Few-Shot Examples
         logger.info("[Step 1/3] Bootstrapping few-shot examples...")
+        cfg = get_active_config()
         demo_candidates = self.bootstrapper.bootstrap_candidates(
-            num_candidates=NUM_CANDIDATES,
+            num_candidates=cfg.num_candidates,
             train_data=train_data,
             module_names=self.module_names,
         )
@@ -169,7 +161,7 @@ class MIPROOptimizer:
             "[Step 3/3] Running Bayesian optimization (%d trials)...", self.n_trials
         )
         logger.info("  Using minibatch evaluation (size=%d)", self.batch_size)
-        logger.info("  Full evaluation every %d trials", MINIBATCH_FULL_EVAL_STEPS)
+        logger.info("  Full evaluation every %d trials", cfg.minibatch_full_eval_steps)
 
         optimized_program = self._run_bayesian_optimization(demo_candidates)
 
@@ -201,6 +193,7 @@ class MIPROOptimizer:
         Uses minibatch evaluation with periodic full validation.
         """
         # Initialize surrogate optimizer with new Optuna-based search.
+        cfg = get_active_config()
         self.surrogate = SurrogateOptimizer(
             program=self.program,
             instruction_candidates=self.instruction_candidates,
@@ -210,7 +203,7 @@ class MIPROOptimizer:
             num_trials=self.n_trials,
             minibatch_size=self.batch_size,
             eval_batch_size=self.eval_batch_size,
-            minibatch_full_eval_steps=MINIBATCH_FULL_EVAL_STEPS,
+            minibatch_full_eval_steps=cfg.minibatch_full_eval_steps,
             seed=42,
             use_minibatch=True,
             val_split="validation",

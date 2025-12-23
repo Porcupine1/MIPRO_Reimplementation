@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    # Apply LIGHT tier for fast testing
-    apply_tier("light")
+    # Apply LIGHT tier for fast testing (BEFORE loading dataset)
+    tier_config = apply_tier("light")
 
     setup_logging(
         level=logging.INFO,
@@ -39,8 +39,9 @@ def main():
     )
 
     logger.info("=== InstructionProposer standalone test (LIGHT tier) ===")
+    logger.info("Using MAX_EXAMPLES=%d", tier_config.max_examples)
 
-    # 1. Load dataset and grab a small training slice for grounding
+    # 1. Load dataset and grab a small training slice for grounding (will use tier-configured MAX_EXAMPLES)
     logger.info("Loading dataset...")
     dataset = QADataset()
     dataset.load()
@@ -50,9 +51,9 @@ def main():
         return
 
     # Use a small prefix of the train split to keep the test fast
-    max_grounding_examples = 5
+    max_grounding_examples = min(5, len(train_data))
     train_examples = [
-        train_data[i] for i in range(min(len(train_data), max_grounding_examples))
+        train_data[i] for i in range(max_grounding_examples)
     ]
     logger.info("Using %d examples for grounding summaries", len(train_examples))
 
@@ -114,11 +115,23 @@ def main():
         if body_lines:
             logger.instr("\n".join(header_lines + body_lines) + "\n")
 
-    # Print the entire candidate set at the end (instruction-level color)
-    logger.instr(
-        "\n\n======= FULL instruction candidate set ========\n%s\n",
-        pprint.pformat(all_candidates),
-    )
+    # Print the entire candidate set at the end with custom formatting similar to demo_candidates
+    logger.instr("\n\n======= FULL instruction candidate set ========")
+    for predictor_idx, instruction_list in all_candidates.items():
+        module_name = module_names[predictor_idx]
+        logger.instr(f"\n[Predictor: {predictor_idx}, Module: {module_name}]")
+        logger.instr(f"  Total instructions: {len(instruction_list)}")
+        for instr_idx, instruction in enumerate(instruction_list):
+            if instr_idx == 0:
+                label = "original"
+            else:
+                label = f"candidate_{instr_idx}"
+            logger.instr(f"  Instruction {instr_idx} [{label}]:")
+            # Split long instructions into multiple lines for better readability
+            lines = instruction.strip().split('\n')
+            for line in lines:
+                logger.instr(f"    {line}")
+    logger.instr("")
 
     logger.info("=== InstructionProposer test completed ===")
 

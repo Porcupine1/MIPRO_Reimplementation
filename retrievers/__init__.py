@@ -9,10 +9,8 @@ from config import (
     HOPS,
     MAX_SENTS_PER_TITLE,
     RETRIEVER,
-    TOP_SENTS_TOTAL,
-    TOP_TITLES_HOP1,
-    TOP_TITLES_HOP2,
     USE_RETRIEVER_CACHE,
+    get_active_config,
 )
 from .base import MockRetriever, Passage, Retriever
 from .hotpot_context import HotpotContextRetriever
@@ -40,12 +38,14 @@ def build_retriever(name: Optional[str] = None) -> Retriever:
         return HotpotContextRetriever()
 
     if selected == "wiki_online":
+        # Get tier-specific retrieval parameters from active config
+        cfg = get_active_config()
         cache = build_cache() if USE_RETRIEVER_CACHE else None
         return WikipediaRetriever(
             hops=HOPS,
-            top_titles_hop1=TOP_TITLES_HOP1,
-            top_titles_hop2=TOP_TITLES_HOP2,
-            top_sentences=TOP_SENTS_TOTAL,
+            top_titles_hop1=cfg.top_titles_hop1,
+            top_titles_hop2=cfg.top_titles_hop2,
+            top_sentences=cfg.top_sents_total,
             max_per_title=MAX_SENTS_PER_TITLE,
             cache=cache,
         )

@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from backend import LMBackend
+from config import get_active_config
 
 
 class GroundingHelper:
@@ -35,7 +36,7 @@ class GroundingHelper:
             self.program_summary = None
 
     def summarize_dataset(
-        self, examples: List[Dict[str, Any]], n_samples: int = 50, batch_size: int = 5
+        self, examples: List[Dict[str, Any]], n_samples: int = None, batch_size: int = 5
     ) -> str:
         """
         Characterize patterns in the dataset using iterative batch process.
@@ -43,12 +44,22 @@ class GroundingHelper:
         Iterates over dataset in batches. If LM outputs "COMPLETE" 5 times consecutively,
         stops and summarizes accumulated observations.
 
+        Args:
+            examples: List of dataset examples
+            n_samples: Number of samples to analyze (defaults to min(50, MAX_EXAMPLES))
+            batch_size: Size of batches for processing
+
         Returns a summary of:
         - question types
         - answer types
         - common patterns
         - task nature
         """
+        # Default n_samples to respect MAX_EXAMPLES from active tier config
+        if n_samples is None:
+            cfg = get_active_config()
+            n_samples = min(50, cfg.max_examples)
+        
         observations = []
         complete_count = 0
         max_complete = 5

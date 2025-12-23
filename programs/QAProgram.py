@@ -53,7 +53,21 @@ class QAProgram:
         if "query" not in self.modules:
             raise ValueError("Query module not found in program")
         module = self.modules["query"]
+        
+        # Build and log the prompt
+        prompt = module.build_prompt(question=question)
+        logger.instr("\n" + "="*80)
+        logger.instr("QUERY GENERATION PROMPT:")
+        logger.instr("-"*80)
+        logger.instr("%s", prompt)
+        logger.instr("-"*80)
+        
+        # Generate the query
         query = module.forward(question=question)
+        
+        logger.instr("GENERATED QUERY: %s", query)
+        logger.instr("="*80 + "\n")
+        
         # Record trace
         self.trace.append(
             {"module": module.name, "input": {"question": question}, "output": query}
@@ -124,6 +138,18 @@ class QAProgram:
             len(context.split("\n")),
             len(context),
         )
+        
+        # Log the retrieved context
+        logger.instr("\n" + "="*80)
+        logger.instr("RETRIEVED CONTEXT (%d chars, %d lines):", len(context), len(context.split("\n")))
+        logger.instr("-"*80)
+        # Truncate context display if too long (show first 1000 chars)
+        if len(context) > 1000:
+            logger.instr("%s\n... [truncated, %d more chars] ...", context[:1000], len(context) - 1000)
+        else:
+            logger.instr("%s", context)
+        logger.instr("="*80 + "\n")
+        
         return context
 
     def generate_answer(self, question: str, context: str) -> str:
@@ -137,7 +163,25 @@ class QAProgram:
             len(context),
             question,
         )
+        
+        # Build and log the prompt
+        prompt = module.build_prompt(question=question, context=context)
+        logger.instr("\n" + "="*80)
+        logger.instr("ANSWER GENERATION PROMPT:")
+        logger.instr("-"*80)
+        # Truncate prompt display if too long (show first 1500 chars)
+        if len(prompt) > 1500:
+            logger.instr("%s\n... [truncated, %d more chars] ...", prompt[:1500], len(prompt) - 1500)
+        else:
+            logger.instr("%s", prompt)
+        logger.instr("-"*80)
+        
+        # Generate the answer
         answer = module.forward(question=question, context=context)
+        
+        logger.instr("GENERATED ANSWER: %s", answer)
+        logger.instr("="*80 + "\n")
+        
         # Record trace
         self.trace.append(
             {
@@ -165,12 +209,24 @@ class QAProgram:
         if "question" not in example:
             raise ValueError("Example must contain 'question' key")
         question = example["question"]
-        logger.instr("QAProgram forward start. Question: %s", question)
+        
+        logger.instr("\n" + "="*80)
+        logger.instr("QA PIPELINE RUN STARTED")
+        logger.instr("="*80)
+        logger.instr("QUESTION: %s", question)
+        logger.instr("="*80)
 
         query = self.generate_query(question)
         context = self.retrieve_context(question, query, example)
         answer = self.generate_answer(question, context)
-        logger.instr("QAProgram forward complete. Answer: %s", answer)
+        
+        logger.instr("\n" + "="*80)
+        logger.instr("QA PIPELINE COMPLETED")
+        logger.instr("Question: %s", question)
+        logger.instr("Query: %s", query)
+        logger.instr("Answer: %s", answer)
+        logger.instr("="*80 + "\n")
+        
         return answer
 
     def process_batch(

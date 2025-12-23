@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    # Apply LIGHT tier for fast testing
-    apply_tier("light")
+    # Apply LIGHT tier for fast testing (BEFORE loading dataset)
+    tier_config = apply_tier("light")
 
     setup_logging(
         level=logging.INFO,
@@ -38,8 +38,9 @@ def main():
     )
 
     logger.info("=== DemoBootstrapper standalone test (LIGHT tier) ===")
+    logger.info("Using MAX_EXAMPLES=%d", tier_config.max_examples)
 
-    # 1. Load dataset
+    # 1. Load dataset (will use tier-configured MAX_EXAMPLES)
     logger.info("Loading dataset...")
     dataset = QADataset()
     dataset.load()

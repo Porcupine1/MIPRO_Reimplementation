@@ -5,7 +5,7 @@ import optuna
 from optuna.distributions import CategoricalDistribution
 from optuna.trial import TrialState, create_trial
 
-from config import N_TRIALS, BATCH_SIZE, EVAL_BATCH_SIZE, MINIBATCH_FULL_EVAL_STEPS
+from config import get_active_config
 
 
 logger = logging.getLogger(__name__)
@@ -23,10 +23,10 @@ class SurrogateOptimizer:
         predictor_to_module: Dict[int, str],
         evaluate_fn: Callable[[Any, int, str], float],
         demo_candidates: Optional[Dict[int, List[List[Dict[str, Any]]]]] = None,
-        num_trials: int = N_TRIALS,
-        minibatch_size: int = BATCH_SIZE,
-        eval_batch_size: int = EVAL_BATCH_SIZE,
-        minibatch_full_eval_steps: int = MINIBATCH_FULL_EVAL_STEPS,
+        num_trials: int = None,
+        minibatch_size: int = None,
+        eval_batch_size: int = None,
+        minibatch_full_eval_steps: int = None,
         seed: int = 42,
         use_minibatch: bool = True,
         val_split: str = "validation",
@@ -38,22 +38,25 @@ class SurrogateOptimizer:
             predictor_to_module: predictor_idx -> module name.
             evaluate_fn: Callable(program, batch_size, split) -> score.
             demo_candidates: predictor_idx -> list of demo options (each option is a list of demos).
-            num_trials: number of Optuna trials to run.
-            minibatch_size: batch size for minibatch evaluation.
-            eval_batch_size: batch size for full evaluation.
-            minibatch_full_eval_steps: run full eval after this many minibatch trials.
+            num_trials: number of Optuna trials to run (defaults to tier config).
+            minibatch_size: batch size for minibatch evaluation (defaults to tier config).
+            eval_batch_size: batch size for full evaluation (defaults to tier config).
+            minibatch_full_eval_steps: run full eval after this many minibatch trials (defaults to tier config).
             seed: random seed for the TPE sampler.
             use_minibatch: whether to use minibatch objective.
             val_split: dataset split name for full evaluations.
         """
+        # Resolve defaults from active tier config
+        cfg = get_active_config()
+        
         self.program = program
         self.instruction_candidates = instruction_candidates
         self.predictor_to_module = predictor_to_module
         self.demo_candidates = demo_candidates or {}
-        self.num_trials = num_trials
-        self.minibatch_size = minibatch_size
-        self.eval_batch_size = eval_batch_size
-        self.minibatch_full_eval_steps = minibatch_full_eval_steps
+        self.num_trials = num_trials if num_trials is not None else cfg.n_trials
+        self.minibatch_size = minibatch_size if minibatch_size is not None else cfg.batch_size
+        self.eval_batch_size = eval_batch_size if eval_batch_size is not None else cfg.eval_batch_size
+        self.minibatch_full_eval_steps = minibatch_full_eval_steps if minibatch_full_eval_steps is not None else cfg.minibatch_full_eval_steps
         self.seed = seed
         self.use_minibatch = use_minibatch
         self.val_split = val_split

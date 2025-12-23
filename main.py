@@ -109,12 +109,10 @@ Examples:
 
     # 4. Run MIPRO optimization
     logger.info("[4/4] Running MIPRO optimization...")
+    # Note: MIPROOptimizer reads from active tier config automatically
     optimizer = MIPROOptimizer(
         program=program,
         dataset=dataset,
-        n_trials=tier_config.n_trials,
-        batch_size=tier_config.batch_size,
-        eval_batch_size=tier_config.eval_batch_size,
     )
 
     optimized_program = optimizer.optimize(
