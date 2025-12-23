@@ -67,18 +67,25 @@ def main():
     )
 
     # 4. Print a brief summary of what was collected
+    module_names = program.get_module_names()
     logger.info(
         "Bootstrapper returned demo candidates for %d modules", len(demo_candidates)
     )
-    for module_name, candidate_sets in demo_candidates.items():
-        logger.info("Module '%s': %d candidate sets", module_name, len(candidate_sets))
+    for predictor_idx, candidate_sets in demo_candidates.items():
+        module_name = module_names[predictor_idx]
+        logger.info(
+            "Predictor %d (%s): %d candidate sets",
+            predictor_idx,
+            module_name,
+            len(candidate_sets),
+        )
         # Log one sample demo block per module with instruction-level color
         for idx, demo_set in enumerate(candidate_sets):
             if not demo_set:
                 continue
             sample = demo_set[0]
             header = (
-                f"\n====== Demo sample for module '{module_name}' "
+                f"\n====== Demo sample for predictor {predictor_idx} ({module_name}) "
                 f"(candidate set {idx}, {len(demo_set)} demos) ======"
             )
             body = pprint.pformat(sample, indent=2)
@@ -89,8 +96,9 @@ def main():
 
     # Log the entire demo_candidates array at the end with custom formatting
     logger.instr("\n\n======= FULL demo_candidates ========")
-    for module_name, candidate_sets in demo_candidates.items():
-        logger.instr(f"\n[Module: {module_name}]")
+    for predictor_idx, candidate_sets in demo_candidates.items():
+        module_name = module_names[predictor_idx]
+        logger.instr(f"\n[Predictor: {predictor_idx}, Module: {module_name}]")
         for idx, demo_set in enumerate(candidate_sets):
             logger.instr(f"  Candidate Set {idx}: {len(demo_set)} demos")
             for demo_idx, demo in enumerate(demo_set):

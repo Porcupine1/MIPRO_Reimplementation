@@ -1,7 +1,6 @@
 import requests
 from typing import Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
 from requests.adapters import HTTPAdapter
 from config import (
     MODEL_NAME,
