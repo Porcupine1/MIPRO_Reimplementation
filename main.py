@@ -3,80 +3,94 @@
 Main script to run MIPRO optimization on QA program.
 """
 
+import logging
+import os
+
 from backend import LMBackend
 from QADataset import QADataset
 from programs import QAProgram
 from optimizers import MIPROOptimizer
-from config import MODEL_NAME
+from config import MODEL_NAME, OUTPUT_DIR
+
+
+logger = logging.getLogger(__name__)
 
 
 def main():
-    print("Initializing MIPRO Optimization...")
-    print(f"Model: {MODEL_NAME}")
-    
+    # Ensure output directory exists and configure logging to both console and file
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    log_path = os.path.join(OUTPUT_DIR, "run.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, mode="w"),
+        ],
+    )
+    logger.info("Logging to %s", log_path)
+
+    logger.info("Initializing MIPRO Optimization...")
+    logger.info("Model: %s", MODEL_NAME)
+
     # 1. Load dataset
-    print("\n[1/4] Loading dataset...")
+    logger.info("[1/4] Loading dataset...")
     dataset = QADataset()
     dataset.load()
-    print(f"  Train: {len(dataset.train)} examples")
-    print(f"  Validation: {len(dataset.validation)} examples")
-    
+    logger.info("  Train: %d examples", len(dataset.train))
+    logger.info("  Validation: %d examples", len(dataset.validation))
+
     # 2. Initialize program
-    print("\n[2/4] Initializing QA program...")
+    logger.info("[2/4] Initializing QA program...")
     backend = LMBackend()
     program = QAProgram(backend=backend)
-    print(f"  Modules: {program.get_module_names()}")
-    
+    logger.info("  Modules: %s", program.get_module_names())
+
     # 3. Test baseline (optional)
-    print("\n[3/4] Testing baseline program...")
+    logger.info("[3/4] Testing baseline program...")
     test_batch = dataset.sample_batch(1, split="validation")
     if not test_batch:
-        print("  Warning: No validation examples available")
+        logger.warning("  No validation examples available for baseline test")
     else:
         test_example = test_batch[0]
         try:
             baseline_answer = program.forward(test_example)
-            print(f"  Question: {test_example['question'][:100]}...")
-            print(f"  Baseline Answer: {baseline_answer[:100]}...")
-            print(f"  Ground Truth: {test_example['answer'][:100]}...")
+            logger.info("  Question: %s...", test_example["question"][:100])
+            logger.info("  Baseline Answer: %s...", baseline_answer[:100])
+            logger.info("  Ground Truth: %s...", test_example["answer"][:100])
         except Exception as e:
-            print(f"  Error in baseline: {e}")
-    
+            logger.error("  Error in baseline: %s", e)
+
     # 4. Run MIPRO optimization
-    print("\n[4/4] Running MIPRO optimization...")
+    logger.info("[4/4] Running MIPRO optimization...")
     optimizer = MIPROOptimizer(
-        program=program,
-        dataset=dataset,
-        n_trials=10,
-        batch_size=20,
-        eval_batch_size=50
+        program=program, dataset=dataset, n_trials=10, batch_size=20, eval_batch_size=50
     )
-    
+
     optimized_program = optimizer.optimize(
         task_description="Answer multi-hop questions using retrieved context from Wikipedia"
     )
-    
+
     # 5. Test optimized program
-    print("\n[5/5] Testing optimized program...")
+    logger.info("[5/5] Testing optimized program...")
     if test_batch:
         try:
             optimized_answer = optimized_program.forward(test_example)
-            print(f"  Optimized Answer: {optimized_answer[:100]}...")
+            logger.info("  Optimized Answer: %s...", optimized_answer[:100])
         except Exception as e:
-            print(f"  Error in optimized: {e}")
-    
+            logger.error("  Error in optimized: %s", e)
+
     # 6. Show best instructions
-    print("\n" + "="*60)
-    print("Best Instructions Found:")
-    print("="*60)
+    logger.info("=" * 60)
+    logger.info("Best Instructions Found:")
+    logger.info("=" * 60)
     best_instructions = optimizer.get_best_instructions()
     for module_name, instruction in best_instructions.items():
-        print(f"\n{module_name}:")
-        print(f"  {instruction}")
-    
-    print("\nDone!")
+        logger.info("%s:", module_name)
+        logger.info("  %s", instruction)
+
+    logger.info("Done!")
 
 
 if __name__ == "__main__":
     main()
-

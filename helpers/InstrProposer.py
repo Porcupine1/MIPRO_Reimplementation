@@ -17,7 +17,7 @@ PROMPTING_TIPS = {
     "simple": "Keep the instruction clear and concise.",
     "description": "Make sure your instruction is very informative and descriptive.",
     "high_stakes": "The instruction should include a high stakes scenario in which the LM must solve the task!",
-    "persona": "Provide the LM with a persona that is relevant to the task (ie. \"You are a ...\")"
+    "persona": 'Provide the LM with a persona that is relevant to the task (ie. "You are a ...")',
 }
 
 
@@ -29,26 +29,24 @@ class InstructionProposer:
     - Grounds proposals in dataset/program characteristics
     - Meta-optimizes proposal strategy
     """
-    
+
     def __init__(
         self,
         lm: LMBackend = None,
         train_examples: Optional[List[Dict[str, Any]]] = None,
-        program: Optional[QAProgram] = None
+        program: Optional[QAProgram] = None,
     ):
         self.lm = lm or LMBackend()
         # Initialize grounding helper with training set and program to generate summaries
         self.grounding_helper = GroundingHelper(
-            lm=self.lm,
-            train_examples=train_examples,
-            program=program
+            lm=self.lm, train_examples=train_examples, program=program
         )
-    
+
     def _get_default_instruction(self, module_name: str) -> str:
         """Get default instruction for a module"""
         defaults = {
             "query": "Generate a search query to answer the question.",
-            "answer": "Answer the question based on the context."
+            "answer": "Answer the question based on the context.",
         }
         return defaults.get(module_name, "Complete the task.")
 
@@ -57,7 +55,7 @@ class InstructionProposer:
         Format a demo example. Uses field prefixes.
         """
         lines = []
-        
+
         # Handle both trace format and flat format
         if "input" in demo:
             demo_input = demo["input"]
@@ -65,18 +63,18 @@ class InstructionProposer:
         else:
             demo_input = demo
             demo_output = demo.get("output") or demo.get(module_name, "")
-        
+
         # Format inputs with prefixes
         for key, value in demo_input.items():
             if key not in ["output", module_name]:  # Skip output fields
                 prefix = key.upper().replace("_", " ")
                 lines.append(f"{prefix}: {value}")
-        
+
         # Format output
         if demo_output:
             output_prefix = module_name.upper().replace("_", " ")
             lines.append(f"{output_prefix}: {demo_output}")
-        
+
         return "\n".join(lines)
 
     def _get_module_task_description(self, module_name: str, overall_task: str) -> str:
@@ -145,38 +143,38 @@ class InstructionProposer:
         """
         Build meta-prompt.
         """
-    
+
         # Main instruction
         parts = [
             "Use the information below to learn about a task that we are trying to solve using calls to an LM, "
             "then generate a new instruction that will be used to prompt a Language Model to better solve the task."
         ]
         parts.append("")
-        
+
         # DATASET SUMMARY (if enabled)
         if use_dataset_summary and dataset_summ:
             parts.append("DATASET SUMMARY:")
             parts.append(dataset_summ)
             parts.append("")
-        
+
         # PROGRAM CODE (if program-aware)
         if use_program_aware and program_code:
             parts.append("PROGRAM CODE:")
             parts.append(program_code)
             parts.append("")
-        
+
         # PROGRAM DESCRIPTION (if program-aware)
         if use_program_aware and program_summ:
             parts.append("PROGRAM DESCRIPTION:")
             parts.append(program_summ)
             parts.append("")
-        
+
         # MODULE DESCRIPTION (if program-aware)
         if use_program_aware and module_description:
             parts.append("MODULE DESCRIPTION:")
             parts.append(module_description)
             parts.append("")
-        
+
         # TASK DEMO(S) (if enabled)
         if use_task_demos and bootstrapped_demos:
             parts.append("TASK DEMO(S):")
@@ -187,13 +185,13 @@ class InstructionProposer:
                 if i < len(bootstrapped_demos[:3]):
                     parts.append("")
             parts.append("")
-        
+
         # BASIC INSTRUCTION (always included - this is the original instruction)
         if basic_instruction:
             parts.append("BASIC INSTRUCTION:")
             parts.append(basic_instruction)
             parts.append("")
-        
+
         # TIP (if enabled)
         if use_tip and tip and tip in PROMPTING_TIPS:
             tip_text = PROMPTING_TIPS[tip]
@@ -201,10 +199,10 @@ class InstructionProposer:
                 parts.append("TIP:")
                 parts.append(tip_text)
                 parts.append("")
-        
+
         # Output field prefix
         parts.append("PROPOSED INSTRUCTION:")
-        
+
         return "\n".join(parts)
 
     def propose_instruction(
@@ -226,35 +224,38 @@ class InstructionProposer:
         """
         Generate a single instruction candidate.
         """
-        
+
         # Use summaries from grounding_helper if not provided
         if dataset_summ is None:
             dataset_summ = self.grounding_helper.dataset_summary
         if program_summ is None:
             program_summ = self.grounding_helper.program_summary
-        
+
         # Get program code if program-aware
         if program_aware and program_code is None:
             # Try to get program from grounding_helper if available
-            if hasattr(self.grounding_helper, 'program') and self.grounding_helper.program:
+            if (
+                hasattr(self.grounding_helper, "program")
+                and self.grounding_helper.program
+            ):
                 program_code = self._get_program_code(self.grounding_helper.program)
             else:
                 program_code = ""
-        
+
         # Get module description if program-aware: use task description
         if program_aware and module_description is None and program_summ:
             module_description = self._get_module_role_description(
                 module_name, task_desc, program_summ
             )
-        
+
         # Get basic instruction (original instruction)
         if basic_instruction is None:
             basic_instruction = self._get_default_instruction(module_name)
-        
+
         # Randomly select a tip if not provided
         if tip is None and use_tip:
             tip = random.choice(list(PROMPTING_TIPS.keys()))
-        
+
         # Build meta-prompt
         meta_prompt = self._build_grounded_meta_prompt(
             module_name=module_name,
@@ -270,7 +271,7 @@ class InstructionProposer:
             use_task_demos=use_task_demos,
             use_tip=use_tip,
         )
-        
+
         # Generate instruction with retries
         logger.info(
             "Proposing instruction for module '%s' (tip=%s, use_task_demos=%s)",
@@ -281,14 +282,16 @@ class InstructionProposer:
         MAX_TRIES = 3
         for _ in range(MAX_TRIES):
             instruction = self.lm.generate(
-                meta_prompt, 
+                meta_prompt,
                 temperature=0.7,  # Match todo.txt specification
             )
             instruction = self._parse_instruction(instruction)
             if instruction:
-                logger.debug("Proposed instruction for '%s': %s", module_name, instruction)
+                logger.debug(
+                    "Proposed instruction for '%s': %s", module_name, instruction
+                )
                 return instruction
-        
+
         # Fallback to default if generation fails
         fallback = basic_instruction or self._get_default_instruction(module_name)
         logger.warning(
@@ -309,14 +312,18 @@ class InstructionProposer:
         pattern = re.compile(r"instruction\s*:\s*", re.IGNORECASE)
         match = pattern.search(instruction)
         if match:
-            instruction = instruction[match.end():]
+            instruction = instruction[match.end() :]
 
         # Remove code block markers if present
         instruction = instruction.strip()
         if instruction.startswith("```"):
             lines = instruction.split("\n")
             if len(lines) > 1:
-                instruction = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else instruction
+                instruction = (
+                    "\n".join(lines[1:-1])
+                    if lines[-1].strip() == "```"
+                    else instruction
+                )
 
         # Remove quotes
         instruction = instruction.strip('"').strip("'")
@@ -327,28 +334,28 @@ class InstructionProposer:
         self,
         program: QAProgram,
         task_desc: str,
-        bootstrapped_demos: Dict[str, List[Dict[str, Any]]],
+        bootstrapped_demos: Dict[Any, Any],
         dataset_summ: Optional[str] = None,
         program_summ: Optional[str] = None,
         n_candidates: int = N_INSTRUCTION_CANDIDATES,
         tip: Optional[str] = None,
-        program_aware: bool = True
+        program_aware: bool = True,
     ) -> Dict[int, List[str]]:
         """
         Generate instruction candidates for all modules in a program.
-        
+
         For each predictor in the program:
         - Determines how many instructions to generate (n_candidates)
         - Gets the original instruction from the module (at index 0)
         - For each instruction candidate:
           - Randomly selects a prompting tip (if tip not provided)
           - Calls propose_instruction
-        
+
         In propose_instruction:
         - Gathers task demos from few-shot example candidates (bootstrapped_demos)
         - If program-aware: describes the overall program and specific module's role
         - Generates instruction using the prompt model
-        
+
         Args:
             program: QAProgram instance
             task_desc: Overall task description
@@ -358,7 +365,7 @@ class InstructionProposer:
             n_candidates: Number of proposed instruction candidates to generate per module (original at index 0, then n_candidates proposed)
             tip: Programming tip to guide instruction generation. If None, randomly selects for each candidate.
             program_aware: If True, includes program summary and module role descriptions
-            
+
         Returns:
             Dict mapping predictor indices (0, 1, 2...) to lists of instruction candidates.
             Each list starts with the original instruction at index 0, followed by proposed candidates.
@@ -368,12 +375,12 @@ class InstructionProposer:
             dataset_summ = self.grounding_helper.dataset_summary
         if program_summ is None:
             program_summ = self.grounding_helper.program_summary
-        
+
         # Get program code if program-aware
         program_code = None
         if program_aware:
             program_code = self._get_program_code(program)
-        
+
         all_candidates = {}
         module_names = program.get_module_names()
 
@@ -389,7 +396,7 @@ class InstructionProposer:
         # For each predictor in the program (by index)
         for predictor_idx, module_name in enumerate(module_names):
             candidates = []
-            
+
             # Get the original instruction from the module (index 0)
             if module_name in program.modules:
                 original_instruction = program.modules[module_name].instruction
@@ -398,21 +405,37 @@ class InstructionProposer:
                     original_instruction = self._get_default_instruction(module_name)
             else:
                 original_instruction = self._get_default_instruction(module_name)
-            
+
             candidates.append(original_instruction)
-            
+
+            # Pick appropriate demos: support either a single demo list or list-of-lists.
+            # Accept keys by predictor index or module name.
+            module_demos = bootstrapped_demos.get(predictor_idx)
+            if module_demos is None:
+                module_demos = bootstrapped_demos.get(module_name, [])
+            if module_demos and isinstance(module_demos, list):
+                first = module_demos[0]
+                if isinstance(first, list):
+                    module_demos = first
+                elif isinstance(first, dict):
+                    module_demos = module_demos  # already a flat list of demos
+                else:
+                    module_demos = []
+            else:
+                module_demos = []
+
             # Generate proposed instruction candidates (indices 1, 2, 3, ...)
             for _ in range(n_candidates):
                 # Call propose_instruction (it will randomly select a tip if tip=None)
                 instruction = self.propose_instruction(
                     module_name=module_name,
                     task_desc=task_desc,
-                    bootstrapped_demos=bootstrapped_demos.get(module_name, []),
+                    bootstrapped_demos=module_demos,
                     dataset_summ=dataset_summ,
                     program_summ=program_summ,
                     program_code=program_code,
                     tip=tip,  # Pass through - propose_instruction handles None by random selection
-                    program_aware=program_aware
+                    program_aware=program_aware,
                 )
                 candidates.append(instruction)
 

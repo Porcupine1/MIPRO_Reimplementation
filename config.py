@@ -9,6 +9,17 @@ MAX_PARALLEL_WORKERS = 4
 DATA_DIR = "data/hotpotqa"
 MAX_EXAMPLES = 1000  # maximum total examples to use (80% train, 20% validation)
 
+# retrieval configuration
+RETRIEVER = "hotpot_online"  # "hotpot_local" | "wiki_online" | "mock"
+HOPS = 2
+TOP_TITLES_HOP1 = 4
+TOP_TITLES_HOP2 = 4
+MAX_WIKI_TITLES_TOTAL = 4
+TOP_SENTS_TOTAL = 10
+MAX_SENTS_PER_TITLE = 3
+CACHE_DIR = "cache"
+CACHE_TTL_HOURS = 72
+
 # optimization parameters
 N_TRIALS = 20
 BATCH_SIZE = 35  # minibatch size for evaluation

@@ -68,8 +68,8 @@ class DemoBootstrapper:
         num_candidates: int = NUM_CANDIDATES,
         max_bootstrapped_demos: int = MAX_BOOTSTRAPPED_DEMOS,
         max_labeled_demos: int = MAX_LABELED_DEMOS,
-        split: str = "train",
-    ) -> Dict[str, List[List[Dict[str, Any]]]]:
+        train_data: List[Dict[str, Any]] = None,
+    ) -> Dict[int, List[List[Dict[str, Any]]]]:
         """
         Bootstrap candidate demo sets for each module.
 
@@ -80,7 +80,7 @@ class DemoBootstrapper:
             num_candidates: Number of candidate demo sets to create per module
             max_bootstrapped_demos: Maximum bootstrapped demos per set
             max_labeled_demos: Maximum labeled demos per set
-            split: Dataset split to use
+            train_data: List of training examples to use
 
         Returns:
             Dict mapping module_name -> list of candidate demo sets
@@ -94,13 +94,10 @@ class DemoBootstrapper:
         )
 
         # Step 1: Collect bootstrapped demos by iterating through training examples
-        logger.info("Collecting bootstrapped demos from split='%s'...", split)
+        logger.info(
+            "Collecting bootstrapped demos from %d examples...", len(train_data)
+        )
         bootstrapped_demos = {module: [] for module in self.program.get_module_names()}
-
-        # Get training data (use provided or load from dataset)
-        train_data = self.dataset.get_split(split=split)
-        examples_tried = 0
-        max_examples = len(train_data) if train_data else 1000
 
         for example in train_data:
             if examples_tried >= max_examples:
@@ -130,7 +127,9 @@ class DemoBootstrapper:
                                 demo = {**trace_entry, "score": score}
                                 bootstrapped_demos[module_name].append(demo)
             except Exception as e:
-                logger.warning("Error while bootstrapping example %d: %s", examples_tried, e)
+                logger.warning(
+                    "Error while bootstrapping example %d: %s", examples_tried, e
+                )
                 continue
 
         # Sort by score
@@ -147,7 +146,7 @@ class DemoBootstrapper:
         # Step 2: Collect labeled demos (ground-truth input-output pairs from training set)
         logger.info("Collecting labeled demos...")
         labeled_demos = {module: [] for module in self.program.get_module_names()}
-        labeled_examples = self.dataset.sample_batch(50, split=split)
+        labeled_examples = self.dataset.sample_batch(50, train_data=train_data)
 
         for example in labeled_examples:
             try:
@@ -178,7 +177,8 @@ class DemoBootstrapper:
         # Step 3: Create candidate sets for each module
         import random
 
-        demo_candidates = {module: [] for module in self.program.get_module_names()}
+        module_names = self.program.get_module_names()
+        demo_candidates = {module: [] for module in module_names}
 
         for module_name in self.program.get_module_names():
             bootstrapped = bootstrapped_demos[module_name]
@@ -232,4 +232,9 @@ class DemoBootstrapper:
             )
 
         logger.info("Created %d candidate demo sets per module", num_candidates)
-        return demo_candidates
+        # Return predictor-indexed mapping for downstream consumers
+        predictor_demo_candidates = {
+            idx: demo_candidates[module_name]
+            for idx, module_name in enumerate(module_names)
+        }
+        return predictor_demo_candidates
