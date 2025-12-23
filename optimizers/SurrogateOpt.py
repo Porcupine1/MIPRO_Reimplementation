@@ -58,6 +58,9 @@ class SurrogateOptimizer:
         self.use_minibatch = use_minibatch
         self.val_split = val_split
         self.evaluate_fn = evaluate_fn
+        
+        # Validate candidate structures
+        self._validate_candidates()
 
         self.study: Optional[optuna.Study] = None
         self.best_program: Optional[Any] = None
@@ -71,6 +74,48 @@ class SurrogateOptimizer:
         self.minibatch_eval_calls = 0
         self.full_eval_calls = 0
         self._completed_minibatch_trials = 0
+
+    def _validate_candidates(self) -> None:
+        """Validate instruction and demo candidate structures."""
+        # Validate instruction_candidates
+        if not isinstance(self.instruction_candidates, dict):
+            raise TypeError("instruction_candidates must be a dict")
+        
+        for predictor_idx, candidates in self.instruction_candidates.items():
+            if not isinstance(candidates, list):
+                raise TypeError(
+                    f"Instruction candidates for predictor {predictor_idx} must be a list, "
+                    f"got {type(candidates)}"
+                )
+            if len(candidates) == 0:
+                raise ValueError(
+                    f"Instruction candidates for predictor {predictor_idx} must be non-empty"
+                )
+            for i, candidate in enumerate(candidates):
+                if not isinstance(candidate, str):
+                    raise TypeError(
+                        f"Instruction candidate {i} for predictor {predictor_idx} must be a string, "
+                        f"got {type(candidate)}"
+                    )
+        
+        # Validate demo_candidates
+        if not isinstance(self.demo_candidates, dict):
+            raise TypeError("demo_candidates must be a dict")
+        
+        for predictor_idx, demo_sets in self.demo_candidates.items():
+            if not isinstance(demo_sets, list):
+                raise TypeError(
+                    f"Demo candidates for predictor {predictor_idx} must be a list, "
+                    f"got {type(demo_sets)}"
+                )
+            for i, demo_set in enumerate(demo_sets):
+                if not isinstance(demo_set, list):
+                    raise TypeError(
+                        f"Demo set {i} for predictor {predictor_idx} must be a list of demos, "
+                        f"got {type(demo_set)}"
+                    )
+        
+        logger.debug("Candidate structure validation passed")
 
     def optimize(self) -> Dict[str, Any]:
         """Run Optuna search and return optimization artifacts."""

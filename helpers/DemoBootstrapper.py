@@ -8,6 +8,7 @@ from config import (
     MAX_BOOTSTRAPPED_DEMOS,
     MAX_LABELED_DEMOS,
     BOOTSTRAP_THRESHOLD,
+    MIN_CONTEXT_CHARS,
 )
 
 
@@ -36,11 +37,55 @@ class DemoBootstrapper:
         self.metric = metric
         self.threshold = threshold
 
+    def _check_grounding(
+        self, trace_entry: Dict[str, Any]
+    ) -> bool:
+        """
+        Generic grounding check for trace entries.
+        Rejects demos with insufficient context or fallback refusals.
+
+        Returns:
+            True if demo passes grounding checks, False otherwise.
+        """
+        module_name = trace_entry.get("module", "")
+        trace_input = trace_entry.get("input", {})
+        trace_output = trace_entry.get("output", "")
+
+        # Only apply grounding checks to answer module (requires context)
+        if module_name == "answer":
+            context = trace_input.get("context", "")
+            
+            # Check context length
+            if len(context.strip()) < MIN_CONTEXT_CHARS:
+                logger.info(
+                    "Rejected bootstrapped demo for module '%s': context too short (len=%d, min=%d)",
+                    module_name, len(context.strip()), MIN_CONTEXT_CHARS
+                )
+                return False
+            
+            # Check for fallback refusals
+            lower_output = trace_output.lower()
+            refusal_phrases = [
+                "please provide context",
+                "no context provided",
+                "cannot answer without context",
+                "need more information",
+            ]
+            if any(phrase in lower_output for phrase in refusal_phrases):
+                logger.info(
+                    "Rejected bootstrapped demo for module '%s': output is a fallback refusal",
+                    module_name
+                )
+                return False
+        
+        return True
+
     def _run_and_score(
         self, example: Dict[str, Any]
     ) -> Tuple[List[Dict[str, Any]], float]:
         """
         Run program on example and return module traces with score.
+        Uses an isolated program clone to avoid trace contamination.
 
         Returns:
             module_traces: List of module execution traces from program
@@ -49,11 +94,12 @@ class DemoBootstrapper:
         question = self.dataset.get_question(example)
         ground_truth = self.dataset.get_ground_truth(example)
 
-        # Run program - this populates the trace automatically
-        answer = self.program.forward(example)
+        # Use isolated program clone to avoid trace contamination
+        program_clone = self.program.clone()
+        answer = program_clone.forward(example)
 
-        # Get the trace from the program (already has module, input, output)
-        module_traces = self.program.get_trace()
+        # Get the trace from the cloned program
+        module_traces = program_clone.get_trace()
 
         # Score final output
         if self.metric == "f1":
@@ -68,7 +114,8 @@ class DemoBootstrapper:
         num_candidates: int = NUM_CANDIDATES,
         max_bootstrapped_demos: int = MAX_BOOTSTRAPPED_DEMOS,
         max_labeled_demos: int = MAX_LABELED_DEMOS,
-        train_data: List[Dict[str, Any]] = None,
+        train_data: Optional[Any] = None,
+        module_names: Optional[List[str]] = None,
     ) -> Dict[int, List[List[Dict[str, Any]]]]:
         """
         Bootstrap candidate demo sets for each module.
@@ -80,11 +127,33 @@ class DemoBootstrapper:
             num_candidates: Number of candidate demo sets to create per module
             max_bootstrapped_demos: Maximum bootstrapped demos per set
             max_labeled_demos: Maximum labeled demos per set
-            train_data: List of training examples to use
+            train_data: Optional training split to use. If None, uses dataset's train split.
+            module_names: Optional sorted list of module names. If None, sorts program modules.
 
         Returns:
             Dict mapping module_name -> list of candidate demo sets
         """
+        # Resolve training data source
+        if train_data is None:
+            # Prefer a dedicated accessor if available
+            if hasattr(self.dataset, "get_split"):
+                train_data = self.dataset.get_split("train")
+            else:
+                train_data = getattr(self.dataset, "train", None)
+
+        if train_data is None:
+            logger.warning("No training data provided to DemoBootstrapper; returning empty candidates.")
+            return {}
+
+        # Track how many examples we have tried; by default we iterate over all
+        examples_tried = 0
+        try:
+            max_examples = len(train_data)
+        except TypeError:
+            # Fallback if len() is not supported
+            train_data = list(train_data)
+            max_examples = len(train_data)
+
         logger.info(
             "[Step 1] Bootstrapping %d candidate demo sets per module "
             "(up to %d bootstrapped + %d labeled demos per set)",
@@ -94,10 +163,11 @@ class DemoBootstrapper:
         )
 
         # Step 1: Collect bootstrapped demos by iterating through training examples
-        logger.info(
-            "Collecting bootstrapped demos from %d examples...", len(train_data)
-        )
-        bootstrapped_demos = {module: [] for module in self.program.get_module_names()}
+        logger.info("Collecting bootstrapped demos from %d examples...", max_examples)
+        # Use provided module order or sort once if not provided
+        if module_names is None:
+            module_names = sorted(self.program.get_module_names())
+        bootstrapped_demos = {module: [] for module in module_names}
 
         for example in train_data:
             if examples_tried >= max_examples:
@@ -106,7 +176,7 @@ class DemoBootstrapper:
             # Check if we have enough demos for all modules
             if all(
                 len(bootstrapped_demos[module]) >= max_bootstrapped_demos
-                for module in self.program.get_module_names()
+                for module in module_names
             ):
                 break
 
@@ -124,8 +194,28 @@ class DemoBootstrapper:
                                 len(bootstrapped_demos[module_name])
                                 < max_bootstrapped_demos
                             ):
+                                # Apply generic grounding checks
+                                if not self._check_grounding(trace_entry):
+                                    continue
+                                
+                                # Store demo in consistent trace format with score
                                 demo = {**trace_entry, "score": score}
                                 bootstrapped_demos[module_name].append(demo)
+                                
+                                # Log accepted demo
+                                trace_input = trace_entry.get("input", {})
+                                if module_name == "answer":
+                                    context = trace_input.get("context", "")
+                                    context_len = len(context)
+                                    logger.info(
+                                        "Accepted bootstrapped demo: module=%s, score=%.3f, context_len=%d",
+                                        module_name, score, context_len
+                                    )
+                                else:
+                                    logger.info(
+                                        "Accepted bootstrapped demo: module=%s, score=%.3f",
+                                        module_name, score
+                                    )
             except Exception as e:
                 logger.warning(
                     "Error while bootstrapping example %d: %s", examples_tried, e
@@ -145,8 +235,17 @@ class DemoBootstrapper:
 
         # Step 2: Collect labeled demos (ground-truth input-output pairs from training set)
         logger.info("Collecting labeled demos...")
-        labeled_demos = {module: [] for module in self.program.get_module_names()}
-        labeled_examples = self.dataset.sample_batch(50, train_data=train_data)
+        labeled_demos = {module: [] for module in module_names}
+
+        # Sample labeled examples directly from the provided training data
+        import random
+
+        n_labeled_source = min(50, max_examples)
+        if n_labeled_source > 0:
+            labeled_indices = random.sample(range(max_examples), n_labeled_source)
+            labeled_examples = [train_data[i] for i in labeled_indices]
+        else:
+            labeled_examples = []
 
         for example in labeled_examples:
             try:
@@ -154,14 +253,18 @@ class DemoBootstrapper:
                 ground_truth_answer = self.dataset.get_ground_truth(example)
                 context = self.dataset.get_context(example)
 
-                # Create labeled demos directly from training example (no program execution)
+                # Create labeled demos in consistent trace format
                 # Only create for modules that have ground truth outputs available
-                for module_name in self.program.get_module_names():
+                for module_name in module_names:
                     if module_name == "answer":
                         # Answer module: question + context -> ground truth answer
+                        # Store in trace format: {"module", "input", "output", "score"}
                         demo = {
-                            "question": question,
-                            "context": context,
+                            "module": module_name,
+                            "input": {
+                                "question": question,
+                                "context": context,
+                            },
                             "output": ground_truth_answer,
                             "score": 1.0,  # Labeled examples are perfect
                         }
@@ -174,13 +277,10 @@ class DemoBootstrapper:
 
         logger.info("Collected labeled demos for %d examples", len(labeled_examples))
 
-        # Step 3: Create candidate sets for each module
-        import random
-
-        module_names = self.program.get_module_names()
+        # Step 3: Create candidate sets for each module (module_names already sorted above)
         demo_candidates = {module: [] for module in module_names}
 
-        for module_name in self.program.get_module_names():
+        for module_name in module_names:
             bootstrapped = bootstrapped_demos[module_name]
             labeled = labeled_demos[module_name]
 

@@ -12,6 +12,7 @@ from config import (
     TOP_SENTS_TOTAL,
     TOP_TITLES_HOP1,
     TOP_TITLES_HOP2,
+    USE_RETRIEVER_CACHE,
 )
 from .base import MockRetriever, Passage, Retriever
 from .hotpot_context import HotpotContextRetriever
@@ -34,10 +35,12 @@ def build_retriever(name: Optional[str] = None) -> Retriever:
         return MockRetriever()
 
     if selected == "hotpot_local":
+        # Local Hotpot retriever operates directly over the provided example
+        # context; it does not need configuration knobs like top_sentences.
         return HotpotContextRetriever()
 
     if selected == "wiki_online":
-        cache = build_cache()
+        cache = build_cache() if USE_RETRIEVER_CACHE else None
         return WikipediaRetriever(
             hops=HOPS,
             top_titles_hop1=TOP_TITLES_HOP1,
@@ -47,10 +50,9 @@ def build_retriever(name: Optional[str] = None) -> Retriever:
             cache=cache,
         )
 
-    # Default fallback
-    return HotpotContextRetriever(
-        top_sentences=TOP_SENTS_TOTAL, max_per_title=MAX_SENTS_PER_TITLE
-    )
+    # Default fallback: use the local Hotpot context retriever.
+    # It does not take any configuration arguments.
+    return HotpotContextRetriever()
 
 
 __all__ = [

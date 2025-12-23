@@ -49,7 +49,12 @@ class LMBackend:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        """generate text from prompt using Ollama."""
+        """
+        Generate text from prompt using Ollama.
+
+        Note: we intentionally do **not** truncate the prompt/context here.
+        Any length control should happen upstream when constructing prompts.
+        """
 
         payload = {
             "model": self.model_name,
@@ -57,6 +62,7 @@ class LMBackend:
             "stream": False,
             "options": {
                 "temperature": temperature or self.temperature,
+                # num_predict only controls *output* length, not input truncation.
                 "num_predict": max_tokens or self.max_tokens,
             },
         }

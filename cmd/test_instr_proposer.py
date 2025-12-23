@@ -22,15 +22,16 @@ from backend import LMBackend
 from QADataset import QADataset
 from programs import QAProgram
 from helpers import InstructionProposer
+from logging_config import setup_logging
 
 
 logger = logging.getLogger(__name__)
 
 
 def main():
-    logging.basicConfig(
+    setup_logging(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
     logger.info("=== InstructionProposer standalone test ===")
@@ -74,8 +75,10 @@ def main():
         task_desc=task_desc,
         bootstrapped_demos=None,  # fine to omit; will still use summaries
     )
-    logger.info(
-        "Single proposed instruction for '%s': %s", test_module, single_instruction
+    logger.instr(
+        "\n\n====== Single proposed instruction for '%s' ======\n%s\n",
+        test_module,
+        single_instruction.strip(),
     )
 
     # 5. Test proposing for all modules (with empty demo lists to keep this simple)
@@ -95,13 +98,18 @@ def main():
             module_name,
             len(candidates),
         )
+        # Pretty-print the first couple of options in a block per predictor
+        header_lines = ["", f"====== Instruction options for predictor {predictor_idx} ({module_name}) ======"]
+        body_lines = []
         for j, instr in enumerate(candidates[:2]):
             prefix = "original" if j == 0 else f"candidate_{j}"
-            logger.info("  [%s] %s", prefix, instr)
+            body_lines.append(f"[{prefix}] {instr.strip()}")
+        if body_lines:
+            logger.instr("\n".join(header_lines + body_lines) + "\n")
 
-    # Print the entire candidate set at the end
-    logger.info(
-        "\n======= FULL instruction candidate set ========\n%s",
+    # Print the entire candidate set at the end (instruction-level color)
+    logger.instr(
+        "\n======= FULL instruction candidate set ========\n%s\n",
         pprint.pformat(all_candidates),
     )
 

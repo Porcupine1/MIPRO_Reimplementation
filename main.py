@@ -11,6 +11,7 @@ from QADataset import QADataset
 from programs import QAProgram
 from optimizers import MIPROOptimizer
 from config import MODEL_NAME, OUTPUT_DIR
+from logging_config import setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -20,13 +21,10 @@ def main():
     # Ensure output directory exists and configure logging to both console and file
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     log_path = os.path.join(OUTPUT_DIR, "run.log")
-    logging.basicConfig(
+    setup_logging(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_path, mode="w"),
-        ],
+        log_path=log_path,
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     logger.info("Logging to %s", log_path)
 
@@ -55,9 +53,9 @@ def main():
         test_example = test_batch[0]
         try:
             baseline_answer = program.forward(test_example)
-            logger.info("  Question: %s...", test_example["question"][:100])
-            logger.info("  Baseline Answer: %s...", baseline_answer[:100])
-            logger.info("  Ground Truth: %s...", test_example["answer"][:100])
+            logger.info("  Question: %s...", test_example["question"])
+            logger.info("  Baseline Answer: %s...", baseline_answer)
+            logger.info("  Ground Truth: %s...", test_example["answer"])
         except Exception as e:
             logger.error("  Error in baseline: %s", e)
 
@@ -76,7 +74,7 @@ def main():
     if test_batch:
         try:
             optimized_answer = optimized_program.forward(test_example)
-            logger.info("  Optimized Answer: %s...", optimized_answer[:100])
+            logger.info("  Optimized Answer: %s...", optimized_answer)
         except Exception as e:
             logger.error("  Error in optimized: %s", e)
 
@@ -86,8 +84,11 @@ def main():
     logger.info("=" * 60)
     best_instructions = optimizer.get_best_instructions()
     for module_name, instruction in best_instructions.items():
-        logger.info("%s:", module_name)
-        logger.info("  %s", instruction)
+        block = (
+            f"\n====== Best instruction for module '{module_name}' ======\n"
+            f"{instruction.strip()}\n"
+        )
+        logger.instr(block)
 
     logger.info("Done!")
 

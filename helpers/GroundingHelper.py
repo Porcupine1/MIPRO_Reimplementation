@@ -70,8 +70,15 @@ class GroundingHelper:
             # Format batch examples
             batch_text = []
             for i, ex in enumerate(batch_examples, 1):
-                question = ex.get("question", "")  # Truncate for brevity
-                answer = ex.get("answer", "")
+                # Be robust to different example types:
+                # - dict-like examples with "question"/"answer" keys (expected)
+                # - raw strings (treat as the question text)
+                if isinstance(ex, dict):
+                    question = ex.get("question", "")
+                    answer = ex.get("answer", "")
+                else:
+                    question = str(ex)
+                    answer = ""
                 batch_text.append(f"{i}. Question: {question} Answer: {answer}")
 
             # Build dataset descriptor prompt
@@ -105,8 +112,12 @@ Your observations (or 'COMPLETE' if comprehensive):"""
             # Fallback: simple analysis of first few examples
             sample_text = []
             for i, ex in enumerate(examples[: min(5, len(examples))], 1):
-                question = ex.get("question", "")
-                answer = ex.get("answer", "")
+                if isinstance(ex, dict):
+                    question = ex.get("question", "")
+                    answer = ex.get("answer", "")
+                else:
+                    question = str(ex)
+                    answer = ""
                 sample_text.append(f"{i}. Question: {question} Answer: {answer}")
 
             observations.append(f"Sample examples: {chr(10).join(sample_text)}")

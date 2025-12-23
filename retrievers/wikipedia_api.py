@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 SEARCH_URL = "https://en.wikipedia.org/w/api.php"
 EXTRACT_URL = "https://en.wikipedia.org/w/api.php"
 
+# Use a descriptive User-Agent per Wikipedia API guidelines. This also helps
+# avoid 403s from some proxies or network middleboxes that block the default
+# Python user agent.
+WIKI_HEADERS = {
+    "User-Agent": "cis0099-ai-sys-is/1.0 (student project; contact: local)",
+    "Accept": "application/json",
+}
+
 
 class WikipediaRetriever(Retriever):
     """
@@ -40,6 +48,8 @@ class WikipediaRetriever(Retriever):
         self.hops = max(1, hops)
         self.top_titles_hop1 = top_titles_hop1
         self.top_titles_hop2 = top_titles_hop2
+        # Keep these for compatibility, but we now return full passages and let
+        # downstream components decide how much context to use.
         self.top_sentences = top_sentences
         self.max_per_title = max_per_title
         self.cache = cache
@@ -74,12 +84,22 @@ class WikipediaRetriever(Retriever):
         }
         try:
             logger.debug("Wikipedia search (API) for %r (limit=%d)", query, limit)
-            resp = requests.get(SEARCH_URL, params=params, timeout=self.request_timeout)
+            resp = requests.get(
+                SEARCH_URL,
+                params=params,
+                headers=WIKI_HEADERS,
+                timeout=self.request_timeout,
+            )
             resp.raise_for_status()
             data = resp.json()
             titles = [item["title"] for item in data.get("query", {}).get("search", [])]
         except Exception as e:
-            logger.warning("Wikipedia search failed for %s: %s", query, e)
+            # Show long/prompty queries and errors on separate, indented lines
+            logger.warning(
+                "Wikipedia search failed.\nQuery:\n%s\nError: %s",
+                query,
+                e,
+            )
             titles = []
 
         self._cache_set(cache_key, titles)
@@ -106,7 +126,10 @@ class WikipediaRetriever(Retriever):
         try:
             logger.debug("Wikipedia extract (API) for %r", title)
             resp = requests.get(
-                EXTRACT_URL, params=params, timeout=self.request_timeout
+                EXTRACT_URL,
+                params=params,
+                headers=WIKI_HEADERS,
+                timeout=self.request_timeout,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -155,7 +178,10 @@ class WikipediaRetriever(Retriever):
         try:
             logger.debug("Wikipedia links (API) for %r", title)
             resp = requests.get(
-                EXTRACT_URL, params=params, timeout=self.request_timeout
+                EXTRACT_URL,
+                params=params,
+                headers=WIKI_HEADERS,
+                timeout=self.request_timeout,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -218,7 +244,7 @@ class WikipediaRetriever(Retriever):
 
         if not scored:
             logger.debug(
-                "No bridge titles found from links for question: %s", question[:200]
+                "No bridge titles found from links for question: %s", question
             )
             return []
 
@@ -252,20 +278,21 @@ class WikipediaRetriever(Retriever):
         example: Optional[Dict[str, Any]] = None,
     ) -> List[Passage]:
         seed_query = query or question
-        logger.info(
-            "WikipediaRetriever: starting retrieval for question: %s", question[:200]
+        logger.debug(
+            "WikipediaRetriever: starting retrieval for question: %s", question
         )
         hop1_titles = self._search(seed_query, self.top_titles_hop1)
         logger.debug("WikipediaRetriever: hop1 titles: %s", hop1_titles)
         hop1_passages = self._fetch_passages_for_titles(hop1_titles)
 
         if self.hops <= 1 or not hop1_passages:
-            logger.info(
+            logger.debug(
                 "WikipediaRetriever: using hop1 only (hops=%d, hop1_passages=%d)",
                 self.hops,
                 len(hop1_passages),
             )
-            return self.selector_collapse(question, query, hop1_passages)
+            # Return full hop1 passages without truncation.
+            return hop1_passages
 
         # Hyperlink / link-graph driven bridging:
         # use outgoing links from hop-1 pages whose titles overlap with the question.
@@ -287,12 +314,18 @@ class WikipediaRetriever(Retriever):
                 merged_titles.append(t)
 
         passages = self._fetch_passages_for_titles(merged_titles)
-        return self.selector_collapse(question, query, passages)
+        logger.debug("WikipediaRetriever: returning %d passages total", len(passages))
+        # Return full passages; do not truncate to top sentences here.
+        return passages
 
     def selector_collapse(
         self, question: str, query: Optional[str], passages: List[Passage]
     ) -> List[Passage]:
-        """Apply sentence selection and return single-sentence passages."""
+        """Apply sentence selection and return single-sentence passages.
+
+        This helper is retained for backward compatibility but is no longer
+        used in the main retrieval path now that we pass full context through.
+        """
         selected = self.selector.select(
             question=question,
             query=query,

@@ -21,15 +21,16 @@ if PROJECT_ROOT not in sys.path:
 from QADataset import QADataset
 from programs import QAProgram
 from helpers import DemoBootstrapper
+from logging_config import setup_logging
 
 
 logger = logging.getLogger(__name__)
 
 
 def main():
-    logging.basicConfig(
+    setup_logging(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
     logger.info("=== DemoBootstrapper standalone test ===")
@@ -57,7 +58,7 @@ def main():
         num_candidates=3,
         max_bootstrapped_demos=2,
         max_labeled_demos=2,
-        split="train",
+        train_data=dataset.train,
     )
 
     # 4. Print a brief summary of what was collected
@@ -66,21 +67,24 @@ def main():
     )
     for module_name, candidate_sets in demo_candidates.items():
         logger.info("Module '%s': %d candidate sets", module_name, len(candidate_sets))
+        # Log one sample demo block per module with instruction-level color
         for idx, demo_set in enumerate(candidate_sets):
-            logger.info(
-                "  Set %d: %d demos (showing at most first 1)", idx, len(demo_set)
+            if not demo_set:
+                continue
+            sample = demo_set[0]
+            header = (
+                f"\n====== Demo sample for module '{module_name}' "
+                f"(candidate set {idx}, {len(demo_set)} demos) ======"
             )
-            if demo_set:
-                sample = demo_set[0]
-                logger.info("    Sample demo keys: %s", list(sample.keys()))
-                logger.info("    Sample demo score: %s", sample.get("score"))
-                break  # only show one sample per module to keep logs short
+            body = pprint.pformat(sample, indent=2)
+            logger.instr(f"{header}\n{body}\n")
+            break  # only show one sample per module to keep logs short
 
     logger.info("=== DemoBootstrapper test completed ===")
 
     # Log the entire demo_candidates array at the end
-    logger.info(
-        "\n======= FULL demo_candidates ========\n%s", pprint.pformat(demo_candidates)
+    logger.instr(
+        "\n======= FULL demo_candidates ========\n%s\n", pprint.pformat(demo_candidates)
     )
 
 

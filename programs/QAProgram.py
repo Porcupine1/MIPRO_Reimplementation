@@ -4,8 +4,6 @@ import copy
 import logging
 from backend import LMBackend
 from retrievers import build_retriever, Retriever
-from my_selectors import SentenceSelector
-from config import TOP_SENTS_TOTAL, MAX_SENTS_PER_TITLE
 from QADataset import QADataset
 from .PromptMod import PromptModule, QueryModule, AnswerModule
 
@@ -21,12 +19,14 @@ class QAProgram:
         backend: Optional[LMBackend] = None,
         modules: Optional[Dict[str, PromptModule]] = None,
         retriever: Optional[Retriever] = None,
-        selector: Optional[SentenceSelector] = None,
+        selector: Optional[object] = None,
     ):
         self.backend = backend or LMBackend()
         self.modules = modules or {"query": QueryModule(), "answer": AnswerModule()}
         self.retriever = retriever or build_retriever()
-        self.selector = selector or SentenceSelector()
+        # Selector is kept for backward compatibility but is no longer used for
+        # truncating context – we now pass the full retrieved context through.
+        self.selector = selector
         # Thread-local trace storage so concurrent batch execution does not share state.
         self._trace_local = threading.local()
         self.trace = []  # List of module traces per thread
@@ -48,7 +48,7 @@ class QAProgram:
     def generate_query(self, question: str) -> str:
         """generate search query from question"""
 
-        logger.debug("Generating query for question: %s", question[:200])
+        logger.debug("Generating query for question: %s", question)
         if "query" not in self.modules:
             raise ValueError("Query module not found in program")
         module = self.modules["query"]
@@ -62,46 +62,37 @@ class QAProgram:
     def retrieve_context(
         self, question: str, query: str, example: Dict[str, Any]
     ) -> str:
-        """Retrieve context using the configured retriever and pack selected sentences."""
+        """
+        Retrieve context using the configured retriever and pack **all**
+        retrieved sentences without truncation.
+        """
 
         logger.debug(
             "Retrieving context with retriever '%s' for question: %s | query: %s",
             getattr(self.retriever, "name", type(self.retriever).__name__),
-            question[:200],
-            query[:200],
+            question,
+            query,
         )
         passages = self.retriever.retrieve(
             question=question, query=query, example=example
         )
         logger.debug("Retriever returned %d passages", len(passages))
-        # For the local Hotpot retriever, do not score sentences – just pack all
-        # sentences in title-tagged order. This preserves the provided context
-        # structure while still giving the answer module a clean format.
-        if getattr(self.retriever, "name", "") == "hotpot_local":
-            lines = []
-            for passage in passages:
-                lines.extend(passage.as_tagged_sentences())
-            context = "\n".join(lines)
-            logger.debug(
-                "Packed local context with %d lines and %d characters",
-                len(lines),
-                len(context),
-            )
-            return context
 
-        # For other retrievers (e.g., Wikipedia, mock), apply sentence selection
-        # to reduce noise and keep only the top-K evidence sentences.
-        selected = self.selector.select(
-            question=question,
-            query=query,
-            passages=passages,
-            total_limit=TOP_SENTS_TOTAL,
-            per_title_limit=MAX_SENTS_PER_TITLE,
-        )
-        context = self.selector.pack(selected)
+        # Pack all sentences from all passages, tagged by title.
+        lines = []
+        for passage in passages:
+            if hasattr(passage, "as_tagged_sentences"):
+                lines.extend(passage.as_tagged_sentences())
+            elif getattr(passage, "sentences", None):
+                lines.extend(
+                    f"[{getattr(passage, 'title', '')} | {s.strip()}]"
+                    for s in passage.sentences
+                    if s and s.strip()
+                )
+        context = "\n".join(lines)
         logger.debug(
-            "Packed selected context with %d sentences and %d characters",
-            len(selected),
+            "Packed full context with %d lines and %d characters",
+            len(lines),
             len(context),
         )
         return context
@@ -115,7 +106,7 @@ class QAProgram:
         logger.debug(
             "Generating answer with context length %d chars for question: %s",
             len(context),
-            question[:200],
+            question,
         )
         answer = module.forward(question=question, context=context)
         # Record trace
@@ -145,12 +136,12 @@ class QAProgram:
         if "question" not in example:
             raise ValueError("Example must contain 'question' key")
         question = example["question"]
-        logger.info("QAProgram forward start. Question: %s", question[:200])
+        logger.instr("QAProgram forward start. Question: %s", question)
 
         query = self.generate_query(question)
         context = self.retrieve_context(question, query, example)
         answer = self.generate_answer(question, context)
-        logger.info("QAProgram forward complete. Answer (truncated): %s", answer[:200])
+        logger.instr("QAProgram forward complete. Answer: %s", answer)
         return answer
 
     def process_batch(

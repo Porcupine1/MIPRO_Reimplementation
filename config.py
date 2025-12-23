@@ -10,7 +10,7 @@ DATA_DIR = "data/hotpotqa"
 MAX_EXAMPLES = 1000  # maximum total examples to use (80% train, 20% validation)
 
 # retrieval configuration
-RETRIEVER = "hotpot_online"  # "hotpot_local" | "wiki_online" | "mock"
+RETRIEVER = "wiki_online"  # "hotpot_local" | "wiki_online" | "mock"
 HOPS = 2
 TOP_TITLES_HOP1 = 4
 TOP_TITLES_HOP2 = 4
@@ -32,6 +32,8 @@ NUM_CANDIDATES = 30  # number of candidate demo sets to create
 MAX_BOOTSTRAPPED_DEMOS = 4  # max bootstrapped demos per set
 MAX_LABELED_DEMOS = 2  # max labeled demos per set (sampled from training)
 BOOTSTRAP_THRESHOLD = 0.6  # minimum score to keep a bootstrapped demo
+MIN_CONTEXT_CHARS = 200  # minimum context length to accept bootstrapped answer demo
+USE_RETRIEVER_CACHE = True  # use persistent caching for retrieval results
 
 # surrogate optimizer (TPE) parameters
 N_STARTUP_TRIALS = 5

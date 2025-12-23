@@ -46,7 +46,7 @@ class PromptModule:
         self.instruction = instruction
 
     def set_demos(self, demos: List[Dict[str, Any]]):
-        """update demonstrations"""
+        """update demonstrations (base implementation, may be overridden by subclasses)"""
 
         self.demos = demos
 
@@ -73,15 +73,11 @@ class QueryModule(PromptModule):
 
         # add demos
         for demo in self.demos:
-            # Handle both trace format and flat format
-            if "input" in demo:
-                # Trace format: {"module": "...", "input": {"question": "..."}, "output": "..."}
-                demo_question = demo["input"].get("question", "")
-                demo_query = demo.get("output", "")
-            else:
-                # Flat format: {"question": "...", "query": "..."} or {"question": "...", "output": "..."}
-                demo_question = demo.get("question", "")
-                demo_query = demo.get("query") or demo.get("output", "")
+            # Demos are normalized to:
+            # {"module", "input", "output", "score?", "context?"}
+            input_data = demo.get("input", {}) or {}
+            demo_question = input_data.get("question", "")
+            demo_query = demo.get("output", "")
 
             parts.append(f"Question: {demo_question}")
             parts.append(f"Search Query: {demo_query}\n")
@@ -96,6 +92,50 @@ class QueryModule(PromptModule):
         return QueryModule(
             lm=self.lm, instruction=self.instruction, demos=copy.deepcopy(self.demos)
         )
+
+    def set_demos(self, demos: List[Dict[str, Any]]):
+        """
+        Normalize demos to a module-agnostic schema:
+        { "module", "input", "output", "score?", "context?" }
+        """
+
+        normalized: List[Dict[str, Any]] = []
+        for demo in demos:
+            # Already in (or close to) normalized/trace format
+            if "module" in demo and "input" in demo and "output" in demo:
+                module_name = demo.get("module", self.name)
+                input_data = demo.get("input") or {}
+                # Ensure question lives under input
+                if "question" in demo and "question" not in input_data:
+                    input_data = {**input_data, "question": demo["question"]}
+                output = demo.get("output", "")
+                score = demo.get("score")
+                context = demo.get("context")
+            else:
+                # Legacy/flat formats:
+                # {"question", "query", "score?", "context?"}
+                module_name = self.name
+                question = demo.get("question") or demo.get("input", {}).get(
+                    "question", ""
+                )
+                output = demo.get("query") or demo.get("output", "")
+                score = demo.get("score")
+                context = demo.get("context")
+                input_data = {"question": question}
+
+            norm_demo: Dict[str, Any] = {
+                "module": module_name,
+                "input": input_data,
+                "output": output,
+            }
+            if score is not None:
+                norm_demo["score"] = score
+            if context is not None:
+                norm_demo["context"] = context
+
+            normalized.append(norm_demo)
+
+        self.demos = normalized
 
 
 class AnswerModule(PromptModule):
@@ -115,17 +155,13 @@ class AnswerModule(PromptModule):
 
         # add demos
         for demo in self.demos:
-            # Handle both trace format and flat format
-            if "input" in demo:
-                # Trace format: {"module": "...", "input": {"question": "...", "context": "..."}, "output": "..."}
-                demo_question = demo["input"].get("question", "")
-                demo_context = demo["input"].get("context", "")
-                demo_answer = demo.get("output", "")
-            else:
-                # Flat format: {"question": "...", "context": "...", "answer": "..."} or {"question": "...", "context": "...", "output": "..."}
-                demo_question = demo.get("question", "")
-                demo_context = demo.get("context", "")
-                demo_answer = demo.get("answer") or demo.get("output", "")
+            # Demos are normalized to:
+            # {"module", "input", "output", "score?", "context?"}
+            input_data = demo.get("input", {}) or {}
+            demo_question = input_data.get("question", "")
+            # Prefer top-level context if present, fall back to input["context"]
+            demo_context = demo.get("context") or input_data.get("context", "")
+            demo_answer = demo.get("output", "")
 
             parts.append(f"Question: {demo_question}")
             parts.append(f"Context: {demo_context}")
@@ -142,3 +178,52 @@ class AnswerModule(PromptModule):
         return AnswerModule(
             lm=self.lm, instruction=self.instruction, demos=copy.deepcopy(self.demos)
         )
+
+    def set_demos(self, demos: List[Dict[str, Any]]):
+        """
+        Normalize demos to a module-agnostic schema:
+        { "module", "input", "output", "score?", "context?" }
+        """
+
+        normalized: List[Dict[str, Any]] = []
+        for demo in demos:
+            # Already in (or close to) normalized/trace format
+            if "module" in demo and "input" in demo and "output" in demo:
+                module_name = demo.get("module", self.name)
+                input_data = demo.get("input") or {}
+                # Ensure question/context live under input
+                if "question" in demo and "question" not in input_data:
+                    input_data = {**input_data, "question": demo["question"]}
+                if "context" in demo and "context" not in input_data:
+                    input_data = {**input_data, "context": demo["context"]}
+                output = demo.get("output", "")
+                score = demo.get("score")
+                # Keep a top-level context copy if available
+                context = demo.get("context") or input_data.get("context")
+            else:
+                # Legacy/flat formats:
+                # {"question", "context", "answer"/"output", "score?"}
+                module_name = self.name
+                question = demo.get("question") or demo.get("input", {}).get(
+                    "question", ""
+                )
+                context = demo.get("context") or demo.get("input", {}).get(
+                    "context", ""
+                )
+                output = demo.get("answer") or demo.get("output", "")
+                score = demo.get("score")
+                input_data = {"question": question, "context": context}
+
+            norm_demo: Dict[str, Any] = {
+                "module": module_name,
+                "input": input_data,
+                "output": output,
+            }
+            if score is not None:
+                norm_demo["score"] = score
+            if context is not None:
+                norm_demo["context"] = context
+
+            normalized.append(norm_demo)
+
+        self.demos = normalized

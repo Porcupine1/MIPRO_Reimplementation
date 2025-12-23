@@ -62,8 +62,9 @@ class MIPROOptimizer:
         self.bootstrapper = DemoBootstrapper(program, dataset, metric=metric)
         self.grounding = None
         self.instruction_candidates = None
-        module_names = self.program.get_module_names()
-        self.predictor_to_module = {idx: name for idx, name in enumerate(module_names)}
+        # Sort module names once for deterministic predictor indexing
+        self.module_names = sorted(self.program.get_module_names())
+        self.predictor_to_module = {idx: name for idx, name in enumerate(self.module_names)}
         self.surrogate = None
 
         # results
@@ -124,7 +125,7 @@ class MIPROOptimizer:
         # Step 1: Bootstrap Few-Shot Examples
         logger.info("[Step 1/3] Bootstrapping few-shot examples...")
         demo_candidates = self.bootstrapper.bootstrap_candidates(
-            num_candidates=NUM_CANDIDATES, train_data=train_data
+            num_candidates=NUM_CANDIDATES, train_data=train_data, module_names=self.module_names
         )
         logger.info(
             "Created candidate demo sets (per-predictor counts): %s",
@@ -144,6 +145,7 @@ class MIPROOptimizer:
             program_summ=self.grounding.program_summary,
             n_candidates=self.n_instruction_candidates,
             program_aware=True,
+            module_names=self.module_names,
         )
 
         logger.info("Generated instruction candidates:")
@@ -273,9 +275,9 @@ class MIPROOptimizer:
                 logger.debug(
                     "Example %d | Q: %s | Pred: %s | GT: %s",
                     idx,
-                    question[:120],
-                    str(pred)[:120],
-                    str(gt)[:120],
+                    question,
+                    str(pred),
+                    str(gt),
                 )
 
         return score

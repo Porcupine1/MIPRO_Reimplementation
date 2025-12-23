@@ -179,10 +179,10 @@ class InstructionProposer:
         if use_task_demos and bootstrapped_demos:
             parts.append("TASK DEMO(S):")
             # Format examples similar to DSPy's create_example_string
-            for i, demo in enumerate(bootstrapped_demos[:3], 1):  # Limit to 3 like DSPy
+            for i, demo in enumerate(bootstrapped_demos[:5], 1):
                 demo_str = self._format_demo_for_prompt(demo, module_name)
                 parts.append(demo_str)
-                if i < len(bootstrapped_demos[:3]):
+                if i < len(bootstrapped_demos[:5]):
                     parts.append("")
             parts.append("")
 
@@ -340,6 +340,7 @@ class InstructionProposer:
         n_candidates: int = N_INSTRUCTION_CANDIDATES,
         tip: Optional[str] = None,
         program_aware: bool = True,
+        module_names: Optional[List[str]] = None,
     ) -> Dict[int, List[str]]:
         """
         Generate instruction candidates for all modules in a program.
@@ -365,6 +366,7 @@ class InstructionProposer:
             n_candidates: Number of proposed instruction candidates to generate per module (original at index 0, then n_candidates proposed)
             tip: Programming tip to guide instruction generation. If None, randomly selects for each candidate.
             program_aware: If True, includes program summary and module role descriptions
+            module_names: Optional sorted list of module names. If None, sorts program modules.
 
         Returns:
             Dict mapping predictor indices (0, 1, 2...) to lists of instruction candidates.
@@ -382,7 +384,9 @@ class InstructionProposer:
             program_code = self._get_program_code(program)
 
         all_candidates = {}
-        module_names = program.get_module_names()
+        # Use provided module order or sort once if not provided
+        if module_names is None:
+            module_names = sorted(program.get_module_names())
 
         logger.info(
             "Proposing %d instruction candidates per module for %d modules "
