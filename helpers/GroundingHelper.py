@@ -134,6 +134,29 @@ Summary:"""
         Returns description of what each module does and program flow.
         Program-agnostic: analyzes any program structure dynamically.
         """
+        program_code = self.build_program_code(program)
+
+        # Use Program Summarizer Prompt
+        summarizer_prompt = f"""Below is some pseudo-code for a pipeline that solves tasks with calls to language models. Please describe what type of task this program appears to be designed to solve, and how it appears to work. Analyze the code structure, module names, and method calls to infer the program flow.
+
+{program_code}
+
+Description:"""
+
+        summary = self.lm.generate(summarizer_prompt, temperature=0.3)
+        return summary.strip()
+
+    @staticmethod
+    def build_program_code(program) -> str:
+        """
+        Build a pseudo-code representation of the program, including:
+        - class definition
+        - module composition
+        - main entry point / forward method
+
+        This helper is shared between GroundingHelper and other components
+        (e.g., InstructionProposer) to avoid duplicate introspection logic.
+        """
         import inspect
 
         # Get program source code
@@ -142,7 +165,8 @@ Summary:"""
         except (OSError, TypeError):
             # Fallback: try to get module info
             program_source = f"Program class: {program.__class__.__name__}\n"
-            program_source += f"Modules: {program.get_module_names()}\n"
+            if hasattr(program, "get_module_names"):
+                program_source += f"Modules: {program.get_module_names()}\n"
             program_source += "Methods: " + ", ".join(
                 [m for m in dir(program) if not m.startswith("_")]
             )
@@ -182,12 +206,4 @@ Main Entry Point:
 {flow_description}
 """
 
-        # Use Program Summarizer Prompt
-        summarizer_prompt = f"""Below is some pseudo-code for a pipeline that solves tasks with calls to language models. Please describe what type of task this program appears to be designed to solve, and how it appears to work. Analyze the code structure, module names, and method calls to infer the program flow.
-
-{program_code}
-
-Description:"""
-
-        summary = self.lm.generate(summarizer_prompt, temperature=0.3)
-        return summary.strip()
+        return program_code
