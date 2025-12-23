@@ -5,13 +5,18 @@ import logging
 
 from programs import QAProgram
 from QADataset import QADataset
-from helpers import InstructionProposer, DemoBootstrapper, GroundingHelper
+from helpers import InstructionProposer, DemoBootstrapper
 from .SurrogateOpt import SurrogateOptimizer
 from metrics import compute_metrics
 from config import (
     METRIC,
     OUTPUT_DIR,
     get_active_config,
+)
+from cache.candidate_cache import (
+    load_demo_candidates,
+    load_instruction_candidates,
+    cache_exists,
 )
 
 
@@ -31,6 +36,8 @@ class MIPROOptimizer:
         eval_batch_size: int = None,
         n_instruction_candidates: int = None,
         output_dir: str = None,
+        use_cached_demos: bool = False,
+        use_cached_instructions: bool = False,
     ):
         """
         args:
@@ -42,6 +49,8 @@ class MIPROOptimizer:
             eval_batch_size: batch size for final evaluation - defaults to tier config
             n_instruction_candidates: number of instruction candidates per module - defaults to tier config
             output_dir: directory to save results - defaults to config.OUTPUT_DIR
+            use_cached_demos: if True, load demo candidates from cache instead of generating
+            use_cached_instructions: if True, load instruction candidates from cache instead of generating
         """
         # Resolve defaults from active tier config
         cfg = get_active_config()
@@ -54,11 +63,12 @@ class MIPROOptimizer:
         self.eval_batch_size = eval_batch_size if eval_batch_size is not None else cfg.eval_batch_size
         self.n_instruction_candidates = n_instruction_candidates if n_instruction_candidates is not None else cfg.n_instruction_candidates
         self.output_dir = output_dir if output_dir is not None else OUTPUT_DIR
+        self.use_cached_demos = use_cached_demos
+        self.use_cached_instructions = use_cached_instructions
 
         # components - will be initialized in optimize() with training data
         self.proposer = None
-        self.bootstrapper = DemoBootstrapper(program, dataset, metric=metric)
-        self.grounding = None
+        self.bootstrapper = DemoBootstrapper(program, dataset, metric=self.metric)
         self.instruction_candidates = None
         # Sort module names once for deterministic predictor indexing
         self.module_names = sorted(self.program.get_module_names())
@@ -75,7 +85,7 @@ class MIPROOptimizer:
         self.full_eval_candidates = []
         self.call_counts = {}
 
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def optimize(
         self, task_description: str = "Answer questions using retrieved context"
@@ -99,19 +109,14 @@ class MIPROOptimizer:
         logger.info("=" * 60)
 
         # Initialize components with training data for grounding
-        logger.info("[Initialization] Setting up grounding with training data...")
+        logger.info("[Initialization] Setting up components with training data...")
         train_data = self.dataset.get_split(split="train")
         if not train_data:
             raise ValueError("Cannot optimize: No training data available")
         # Note: Dataset is already limited by MAX_EXAMPLES in QADataset.load()
         val_data = self.dataset.get_split(split="validation")
 
-        # Initialize GroundingHelper with training data and program (generates summaries)
-        self.grounding = GroundingHelper(
-            train_examples=train_data, program=self.program
-        )
-
-        # Initialize InstructionProposer with training data and program
+        # Initialize InstructionProposer with training data and program (handles grounding internally)
         self.proposer = InstructionProposer(
             train_examples=train_data, program=self.program
         )
@@ -119,42 +124,70 @@ class MIPROOptimizer:
         # Step 1: Bootstrap Few-Shot Examples
         logger.info("[Step 1/3] Bootstrapping few-shot examples...")
         cfg = get_active_config()
-        demo_candidates = self.bootstrapper.bootstrap_candidates(
-            num_candidates=cfg.num_candidates,
-            train_data=train_data,
-            module_names=self.module_names,
-        )
-        logger.info(
-            "Created candidate demo sets (per-predictor counts): %s",
-            {
-                self.predictor_to_module.get(idx, idx): len(sets)
-                for idx, sets in demo_candidates.items()
-            },
-        )
+        
+        # Check if we should use cached demos
+        if self.use_cached_demos:
+            logger.info("  Attempting to load demo candidates from cache...")
+            demo_candidates = load_demo_candidates()
+            if demo_candidates is not None:
+                logger.info("  ✓ Successfully loaded demo candidates from cache!")
+            else:
+                logger.warning(
+                    "  ✗ Failed to load from cache, generating new demo candidates..."
+                )
+                self.use_cached_demos = False
+        
+        # Generate demo candidates if not using cache or cache load failed
+        if not self.use_cached_demos:
+            demo_candidates = self.bootstrapper.bootstrap_candidates(
+                num_candidates=cfg.num_candidates,
+                train_data=train_data,
+                module_names=self.module_names,
+            )
+            logger.info(
+                "Created candidate demo sets (per-predictor counts): %s",
+                {
+                    self.predictor_to_module.get(idx, idx): len(sets)
+                    for idx, sets in demo_candidates.items()
+                },
+            )
 
         # Step 2: Propose Instruction Candidates
         logger.info("[Step 2/3] Proposing instruction candidates...")
-        self.instruction_candidates = self.proposer.propose_for_all_modules(
-            program=self.program,
-            task_desc=task_description,
-            bootstrapped_demos=demo_candidates,
-            dataset_summ=self.grounding.dataset_summary,
-            program_summ=self.grounding.program_summary,
-            n_candidates=self.n_instruction_candidates,
-            program_aware=True,
-            module_names=self.module_names,
-        )
-
-        logger.info("Generated instruction candidates:")
-        for predictor_idx, candidates in self.instruction_candidates.items():
-            module_name = self.predictor_to_module[predictor_idx]
-            logger.info(
-                "  Predictor %d (%s): %d candidates (1 original + %d proposed)",
-                predictor_idx,
-                module_name,
-                len(candidates),
-                len(candidates) - 1,
+        
+        # Check if we should use cached instructions
+        if self.use_cached_instructions:
+            logger.info("  Attempting to load instruction candidates from cache...")
+            self.instruction_candidates = load_instruction_candidates()
+            if self.instruction_candidates is not None:
+                logger.info("  ✓ Successfully loaded instruction candidates from cache!")
+            else:
+                logger.warning(
+                    "  ✗ Failed to load from cache, generating new instruction candidates..."
+                )
+                self.use_cached_instructions = False
+        
+        # Generate instruction candidates if not using cache or cache load failed
+        if not self.use_cached_instructions:
+            self.instruction_candidates = self.proposer.propose_for_all_modules(
+                program=self.program,
+                task_desc=task_description,
+                bootstrapped_demos=demo_candidates,
+                n_candidates=self.n_instruction_candidates,
+                program_aware=True,
+                module_names=self.module_names,
             )
+
+            logger.info("Generated instruction candidates:")
+            for predictor_idx, candidates in self.instruction_candidates.items():
+                module_name = self.predictor_to_module[predictor_idx]
+                logger.info(
+                    "  Predictor %d (%s): %d candidates (1 original + %d proposed)",
+                    predictor_idx,
+                    module_name,
+                    len(candidates),
+                    len(candidates) - 1,
+                )
 
         # Step 3: Bayesian optimization over instruction + demo space
         logger.info(
@@ -190,7 +223,11 @@ class MIPROOptimizer:
         """
         Run Bayesian optimization to find best instruction + demo configuration.
 
-        Uses minibatch evaluation with periodic full validation.
+        Uses two-stage evaluation on validation split:
+        - Minibatch: Small samples for fast trial exploration
+        - Full Eval: Larger samples for robust periodic validation
+        
+        Both use deterministic sampling from the same validation set.
         """
         # Initialize surrogate optimizer with new Optuna-based search.
         cfg = get_active_config()

@@ -120,25 +120,17 @@ class DemoBootstrapper:
         Bootstrap candidate demo sets for each module.
         
         Args:
-            num_candidates: Number of bootstrapped sets (defaults to tier config)
+            num_candidates: Number of bootstrapped candidate sets (defaults to tier config)
             max_bootstrapped_demos: Max bootstrapped demos per set (defaults to tier config)
             max_labeled_demos: Max labeled demos per set (defaults to tier config)
-
-        Always creates 2 baseline sets (zero-shot + labeled-only), then num_candidates
-        additional sets with bootstrapped demos.
+            train_data: Optional training split to use. If None, uses dataset's train split.
+            module_names: Optional sorted list of module names. If None, sorts program modules.
+            min_num_samples: Minimum number of bootstrapped demos for shuffled candidates
 
         Structure: {module_name: [[demo_set_0], [demo_set_1], ...]}
         - Set 0: Always empty (zero-shot baseline)
         - Set 1: Always labeled-only (labeled baseline)
-        - Sets 2+: Bootstrapped demos (controlled by num_candidates)
-
-        Args:
-            num_candidates: Number of bootstrapped demo sets to create (beyond the 2 baselines)
-            max_bootstrapped_demos: Maximum bootstrapped demos per set
-            max_labeled_demos: Maximum labeled demos per set (used in baseline and mixed sets)
-            train_data: Optional training split to use. If None, uses dataset's train split.
-            module_names: Optional sorted list of module names. If None, sorts program modules.
-            min_num_samples: Minimum number of bootstrapped demos for shuffled candidates
+        - Sets 2+: num_candidates bootstrapped demo sets
 
         Returns:
             Dict mapping module_name -> list of candidate demo sets (total: num_candidates + 2)
@@ -177,9 +169,9 @@ class DemoBootstrapper:
 
         logger.info(
             "[Step 1] Bootstrapping %d candidate demo sets per module "
-            "(always: zero-shot + labeled-only, then %d bootstrapped sets with up to %d bootstrapped + %d labeled demos per set)",
-            num_candidates + 2,  # Total including zero-shot and labeled-only
-            num_candidates,
+            "(2 baselines: zero-shot + labeled-only, then %d bootstrapped sets with up to %d bootstrapped + %d labeled demos per set)",
+            num_candidates + 2,  # Total including baselines
+            num_candidates,  # Bootstrapped sets
             max_bootstrapped_demos,
             max_labeled_demos,
         )
@@ -349,16 +341,13 @@ class DemoBootstrapper:
             labeled = labeled_demos[module_name]
             unshuffled = unshuffled_bootstrapped[module_name]
 
-            # Always include set 0 (zero-shot) and set 1 (labeled-only) as baselines
-            # These don't count toward num_candidates
-
             # Candidate set 0: Empty (zero-shot baseline)
             demo_candidates[module_name].append([])
 
             # Candidate set 1: Labels only (labeled baseline)
             demo_candidates[module_name].append(labeled[:max_labeled_demos])
 
-            # Now create num_candidates additional sets with bootstrapped demos
+            # Now create num_candidates bootstrapped sets
             for i in range(num_candidates):
                 # First candidate: Unshuffled canonical bootstrapped demos
                 if i == 0:

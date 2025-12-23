@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 class SurrogateOptimizer:
     """
     Optuna + TPE search for instruction/demo selection with minibatch refresh.
+    
+    Uses a two-stage evaluation strategy:
+    - Minibatch: Quick evaluations on small samples from validation split (every trial)
+    - Full Eval: Comprehensive evaluation on larger samples from validation split (periodic)
+    
+    Both stages use the same validation split with deterministic sampling (seed=42)
+    to ensure consistent, reproducible evaluation across trials.
     """
 
     def __init__(
@@ -129,8 +136,8 @@ class SurrogateOptimizer:
             "=" * 80 + "\n"
             f"  Trials: {self.num_trials}\n"
             f"  Minibatch Mode: {self.use_minibatch}\n"
-            f"  Minibatch Size: {self.minibatch_size}\n"
-            f"  Full Eval Size: {self.eval_batch_size}\n"
+            f"  Minibatch Size: {self.minibatch_size} (from {self.val_split})\n"
+            f"  Full Eval Size: {self.eval_batch_size} (from {self.val_split})\n"
             f"  Full Eval Every: {self.minibatch_full_eval_steps} trials\n"
             f"  Random Seed: {self.seed}\n" + "=" * 80
         )
@@ -194,7 +201,7 @@ class SurrogateOptimizer:
                 score = self._evaluate(
                     program=candidate_program,
                     batch_size=self.minibatch_size,
-                    split="train",
+                    split=self.val_split,
                     eval_type="minibatch",
                     trial_number=trial.number,
                     config=config,

@@ -23,6 +23,7 @@ from programs import QAProgram
 from helpers import DemoBootstrapper
 from logging_config import setup_logging
 from config import apply_tier
+from cache.candidate_cache import save_demo_candidates
 
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,18 @@ def main():
                         value_str = str(value)
                     logger.instr(f"      {key}: {value_str}")
     logger.instr("")
+
+    # Save demo candidates to cache
+    logger.info("\n=== Saving demo candidates to cache ===")
+    metadata = {
+        "tier": "light",
+        "num_candidates": 2,
+        "max_bootstrapped_demos": 3,
+        "max_labeled_demos": 1,
+        "num_train_examples": len(dataset.train),
+    }
+    cache_path = save_demo_candidates(demo_candidates, metadata=metadata)
+    logger.info("Demo candidates cached successfully at: %s", cache_path)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ MAX_CONTEXT_CHARS = (
 
 # dataset configuration
 DATA_DIR = "data/hotpotqa"
+TASK_DESCRIPTION = "Answer multi-hop questions using retrieved context from Wikipedia"
 # MAX_EXAMPLES: Now in TierConfig (tier-specific)
 
 # retrieval configuration
@@ -89,7 +90,7 @@ USE_RETRIEVER_CACHE = True  # use persistent caching for retrieval results
 N_STARTUP_TRIALS = 5
 
 # evaluation metric
-METRIC = "exact_match"  # or "f1"
+METRIC = "f1"  # or "exact_match"
 
 # output paths
 OUTPUT_DIR = "outputs"
@@ -121,7 +122,7 @@ class TierConfig:
     minibatch_full_eval_steps: int
 
     # Bootstrap parameters
-    num_candidates: int
+    num_candidates: int  # Number of bootstrapped candidate sets (2 additional baselines always created: zero-shot + labeled-only)
     max_bootstrapped_demos: int
     max_labeled_demos: int
 

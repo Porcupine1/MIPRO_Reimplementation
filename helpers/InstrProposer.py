@@ -423,9 +423,17 @@ class InstructionProposer:
             if module_demos is None:
                 module_demos = bootstrapped_demos.get(module_name, [])
             if module_demos and isinstance(module_demos, list):
-                first = module_demos[0]
+                # Check if this is a list of candidate sets (list of lists)
+                first = module_demos[0] if len(module_demos) > 0 else None
                 if isinstance(first, list):
-                    module_demos = first
+                    # Skip first two baseline sets (0: zero-shot, 1: labeled-only)
+                    # Use first non-empty bootstrapped set (2+) for instruction generation
+                    selected_demos = []
+                    for candidate_set in module_demos[2:]:  # Skip first 2 baselines
+                        if isinstance(candidate_set, list) and len(candidate_set) > 0:
+                            selected_demos = candidate_set
+                            break
+                    module_demos = selected_demos
                 elif isinstance(first, dict):
                     module_demos = module_demos  # already a flat list of demos
                 else:
