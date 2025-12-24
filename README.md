@@ -1,6 +1,6 @@
 # MIPRO Implementation
 
-~Implementation of MIPRO (Multi-stage Instruction and Prompt Optimization) for optimizing a QA pipeline.
+Implementation of MIPRO (Multi-stage Instruction and Prompt Optimization) for optimizing a QA pipeline.
 
 ## Overview
 
@@ -12,26 +12,41 @@ MIPRO optimizes instructions and demonstrations for multi-stage language model p
 ## Setup
 
 **Requirements:**
-- Python 3.8+
-- Ollama running locally with llama3.2:3b-instruct-q4_0 model
+- Python **3.9+** (this repo uses modern typing like `list[str]` and `tuple[int, ...]`)
+- **Ollama** running locally (default model: `llama3.2:3b-instruct-q4_0`)
 
 **Installation:**
 ```bash
-# Install dependencies
-pip install datasets optuna
+# Install dependencies with uv (recommended)
+uv lock
+uv sync
 
-# Or use uv
-uv pip install datasets optuna
+# Run commands inside the uv environment
+# (uv will use your system Python, but still isolates deps)
+uv run python3 cmd/download_dataset.py
 
-# Download dataset
-python cmd/download_dataset.py
+# Dataset
+# This repo expects the dataset at: data/hotpotqa/
+# If it's missing on your machine, download via Hugging Face Datasets:
+# (already done above)
+#
+# Pip fallback (no uv):
+# python3 -m pip install datasets optuna requests pyyaml
+# python3 cmd/download_dataset.py
+```
+
+**Ollama (local LLM)**
+
+```bash
+# Install/start Ollama separately, then pull the default model:
+ollama pull llama3.2:3b-instruct-q4_0
 ```
 
 ## Quick Start
 
 ```bash
 # Run MIPRO optimization
-python main.py
+uv run python3 main.py --tier light
 ```
 
 This will:
@@ -40,6 +55,68 @@ This will:
 3. Generate instruction candidates for each module
 4. Run Bayesian optimization to find best instructions
 5. Save results to `outputs/mipro_results.json`
+
+## CLI Cheatsheet
+
+```bash
+# Show available tiers
+uv run python3 main.py --list-tiers
+
+# Check whether cache files exist
+uv run python3 main.py --check-cache
+```
+
+## Faster Optimization with Caching
+
+To speed up optimization by reusing pre-generated candidates:
+
+### Quick Start (One Command)
+```bash
+# Run all three steps automatically
+./run_with_cache.sh
+```
+
+### Manual Steps
+```bash
+# 1. Generate demo candidates cache
+uv run python -m cmd.test_bootstrapper
+
+# 2. Generate instruction candidates (using cached demos)
+uv run python -m cmd.test_instr_proposer --use-cached-demos
+
+# 3. Run optimization with both caches (30-40% faster!)
+uv run python main.py --tier light --use-cache
+```
+
+**Benefits:**
+- **30-40% faster** optimization runs
+- **Reproducible** experiments with the same candidates
+- **Focus on optimization** - skip candidate generation
+- **Reusable** - generate once, use many times
+
+**Documentation:**
+- [QUICK_START_CACHE.md](QUICK_START_CACHE.md) - Step-by-step workflow guide
+- [CACHING_GUIDE.md](CACHING_GUIDE.md) - Complete caching documentation
+
+## Configuration Tiers
+
+Choose a tier based on your needs:
+
+```bash
+# Fast testing (5-10 min)
+python main.py --tier light
+
+# Balanced development (20-40 min)
+python main.py --tier medium
+
+# Full-scale production (1-2 hrs)
+python main.py --tier heavy
+
+# With caching for even faster runs
+python main.py --tier light --use-cache
+```
+
+Run `python main.py --list-tiers` to see all tier configurations.
 
 ## Configuration
 
@@ -50,9 +127,13 @@ Edit `config.py` to customize:
 - `N_INSTRUCTION_CANDIDATES` - Candidates per module
 - `METRIC` - Optimization metric ('f1' or 'exact_match')
 
-## Architecture
+## Retrieval Backends (Online vs Offline)
 
-![Architecture Flow Diagram](arch_flow.png)
+Retrieval is controlled by `RETRIEVER` in `config.py`:
+
+- **`wiki_online`**: live Wikipedia API retrieval (requires internet access)
+- **`hotpot_local`**: uses HotpotQA-provided context (offline-friendly)
+- **`mock`**: simple baseline that flattens example context (offline-friendly)
 
 ### Components
 
@@ -69,6 +150,11 @@ Edit `config.py` to customize:
   - `InstrProposer.py` - Generates instruction candidates via meta-prompting
   - `DemoBootstrapper.py` - Bootstrap demonstrations from traces
   - `GroundingHelper.py` - Dataset and program grounding utilities
+- **`cache/`** - Candidate caching system
+  - `candidate_cache.py` - Save/load demo and instruction candidates
+- **`cmd/`** - Command-line utilities
+  - `test_bootstrapper.py` - Generate and cache demo candidates
+  - `test_instr_proposer.py` - Generate and cache instruction candidates
 - **`QADataset.py`** - HotpotQA dataset handler
 - **`metrics.py`** - Evaluation metrics (F1, Exact Match)
 - **`config.py`** - Central configuration
