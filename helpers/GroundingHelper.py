@@ -1,5 +1,6 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from backend import LMBackend
+from config import get_active_config
 
 
 class GroundingHelper:
@@ -35,7 +36,7 @@ class GroundingHelper:
             self.program_summary = None
 
     def summarize_dataset(
-        self, examples: List[Dict[str, Any]], n_samples: int = 50, batch_size: int = 5
+        self, examples: List[Dict[str, Any]], n_samples: int = None, batch_size: int = 5
     ) -> str:
         """
         Characterize patterns in the dataset using iterative batch process.
@@ -43,12 +44,25 @@ class GroundingHelper:
         Iterates over dataset in batches. If LM outputs "COMPLETE" 5 times consecutively,
         stops and summarizes accumulated observations.
 
+        Args:
+            examples: List of dataset examples
+            n_samples: Number of samples to analyze (defaults to min(50, MAX_EXAMPLES))
+            batch_size: Size of batches for processing
+
         Returns a summary of:
         - question types
         - answer types
         - common patterns
         - task nature
         """
+        # Default n_samples to respect MAX_EXAMPLES from active tier config
+        if n_samples is None:
+            cfg = get_active_config()
+            n_samples = min(50, cfg.max_examples)
+        
+        # Compute deterministic, LM-free dataset stats (answer lengths, question lengths, etc.)
+        stats_block = self._build_dataset_stats_block(examples[: min(n_samples, len(examples))])
+
         observations = []
         complete_count = 0
         max_complete = 5
@@ -70,8 +84,15 @@ class GroundingHelper:
             # Format batch examples
             batch_text = []
             for i, ex in enumerate(batch_examples, 1):
-                question = ex.get("question", "")  # Truncate for brevity
-                answer = ex.get("answer", "")
+                # Be robust to different example types:
+                # - dict-like examples with "question"/"answer" keys (expected)
+                # - raw strings (treat as the question text)
+                if isinstance(ex, dict):
+                    question = ex.get("question", "")
+                    answer = ex.get("answer", "")
+                else:
+                    question = str(ex)
+                    answer = ""
                 batch_text.append(f"{i}. Question: {question} Answer: {answer}")
 
             # Build dataset descriptor prompt
@@ -105,8 +126,12 @@ Your observations (or 'COMPLETE' if comprehensive):"""
             # Fallback: simple analysis of first few examples
             sample_text = []
             for i, ex in enumerate(examples[: min(5, len(examples))], 1):
-                question = ex.get("question", "")
-                answer = ex.get("answer", "")
+                if isinstance(ex, dict):
+                    question = ex.get("question", "")
+                    answer = ex.get("answer", "")
+                else:
+                    question = str(ex)
+                    answer = ""
                 sample_text.append(f"{i}. Question: {question} Answer: {answer}")
 
             observations.append(f"Sample examples: {chr(10).join(sample_text)}")
@@ -122,7 +147,113 @@ Observations:
 Summary:"""
 
         summary = self.lm.generate(summarizer_prompt, temperature=0.3)
-        return summary.strip()
+        summary = summary.strip()
+
+        # Append deterministic stats so downstream proposers can enforce conciseness.
+        # This avoids relying on the LM to "notice" length distribution.
+        if stats_block:
+            return f"{summary}\n\n{stats_block}".strip()
+        return summary
+
+    @staticmethod
+    def _percentiles(values: List[int], percentiles: List[int]) -> Dict[int, int]:
+        """
+        Compute simple nearest-rank percentiles (no interpolation).
+        Percentiles should be integers in [0, 100].
+        """
+        if not values:
+            return {p: 0 for p in percentiles}
+        xs = sorted(values)
+        n = len(xs)
+        out: Dict[int, int] = {}
+        for p in percentiles:
+            if p <= 0:
+                out[p] = xs[0]
+                continue
+            if p >= 100:
+                out[p] = xs[-1]
+                continue
+            # nearest-rank method
+            k = int(round((p / 100) * (n - 1)))
+            k = max(0, min(n - 1, k))
+            out[p] = xs[k]
+        return out
+
+    @staticmethod
+    def _safe_str_len(s: Any) -> int:
+        try:
+            return len(str(s))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _word_count(s: Any) -> int:
+        try:
+            return len(str(s).strip().split())
+        except Exception:
+            return 0
+
+    def _answer_and_question_lengths(
+        self, examples: List[Dict[str, Any]]
+    ) -> Tuple[List[int], List[int], List[int], List[int]]:
+        """
+        Returns: answer_chars, answer_words, question_chars, question_words
+        """
+        a_chars: List[int] = []
+        a_words: List[int] = []
+        q_chars: List[int] = []
+        q_words: List[int] = []
+
+        for ex in examples:
+            if not isinstance(ex, dict):
+                continue
+            a = ex.get("answer", "")
+            q = ex.get("question", "")
+            a_chars.append(self._safe_str_len(a))
+            a_words.append(self._word_count(a))
+            q_chars.append(self._safe_str_len(q))
+            q_words.append(self._word_count(q))
+
+        return a_chars, a_words, q_chars, q_words
+
+    def _build_dataset_stats_block(self, examples: List[Dict[str, Any]]) -> str:
+        """
+        Build a compact, deterministic block describing typical output sizes.
+        This is intended to guide instruction generation to match the dataset's
+        expected answer length (and avoid verbose/refusal-style outputs).
+        """
+        a_chars, a_words, q_chars, q_words = self._answer_and_question_lengths(examples)
+        if not a_chars and not q_chars:
+            return ""
+
+        ps = [10, 50, 90]
+        a_chars_p = self._percentiles(a_chars, ps)
+        a_words_p = self._percentiles(a_words, ps)
+        q_chars_p = self._percentiles(q_chars, ps)
+        q_words_p = self._percentiles(q_words, ps)
+
+        # Heuristic: most HotpotQA answers are short entity strings. Use p90 to set guidance.
+        # Keep it conservative: allow a bit of headroom over p90.
+        answer_words_target_max = max(1, int(a_words_p[90] * 1.5))
+        answer_chars_target_max = max(16, int(a_chars_p[90] * 1.5))
+
+        # Query guidance is less grounded (there is no "gold query"), so keep it mild.
+        query_words_target_max = max(6, int(q_words_p[50] * 0.4))  # ~short phrase from question
+        query_words_target_max = min(query_words_target_max, 18)
+
+        return (
+            "DATASET SIZE / OUTPUT-LENGTH GUIDANCE (computed from ground-truth answers):\n"
+            f"- Answer length (words) p10/p50/p90 = {a_words_p[10]}/{a_words_p[50]}/{a_words_p[90]}\n"
+            f"- Answer length (chars) p10/p50/p90 = {a_chars_p[10]}/{a_chars_p[50]}/{a_chars_p[90]}\n"
+            f"- Question length (words) p10/p50/p90 = {q_words_p[10]}/{q_words_p[50]}/{q_words_p[90]}\n"
+            f"- Question length (chars) p10/p50/p90 = {q_chars_p[10]}/{q_chars_p[50]}/{q_chars_p[90]}\n"
+            "\n"
+            "When writing module instructions, enforce outputs that match the dataset:\n"
+            f"- Answer module: output ONLY the final answer; target <= ~{answer_words_target_max} words "
+            f"(~{answer_chars_target_max} chars), no explanations.\n"
+            f"- Query module: output ONLY a short Wikipedia search query (target <= ~{query_words_target_max} words), "
+            "no extra text.\n"
+        ).strip()
 
     def summarize_program(self, program) -> str:
         """

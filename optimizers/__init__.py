@@ -3,5 +3,4 @@
 from .MIPROOpt import MIPROOptimizer
 from .SurrogateOpt import SurrogateOptimizer
 
-__all__ = ['MIPROOptimizer', 'SurrogateOptimizer']
-
+__all__ = ["MIPROOptimizer", "SurrogateOptimizer"]
