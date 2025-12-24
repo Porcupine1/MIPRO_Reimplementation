@@ -120,6 +120,9 @@ class TierConfig:
     eval_batch_size: int
     n_instruction_candidates: int
     minibatch_full_eval_steps: int
+    # During periodic full-eval refresh, evaluate the top-k minibatch configs.
+    # Smaller is faster; larger is more robust.
+    full_eval_top_k: int
 
     # Bootstrap parameters
     num_candidates: int  # Number of bootstrapped candidate sets (2 additional baselines always created: zero-shot + labeled-only)
@@ -143,10 +146,11 @@ class TierConfig:
 LIGHT_CONFIG = TierConfig(
     # Optimization: minimal trials for quick feedback
     n_trials=5,
-    batch_size=10,
-    eval_batch_size=20,
+    batch_size=5,
+    eval_batch_size=10,
     n_instruction_candidates=3,
     minibatch_full_eval_steps=3,
+    full_eval_top_k=1,
     # Bootstrap: fewer candidates and demos
     num_candidates=5,
     max_bootstrapped_demos=2,
@@ -168,6 +172,7 @@ MEDIUM_CONFIG = TierConfig(
     eval_batch_size=50,
     n_instruction_candidates=6,
     minibatch_full_eval_steps=7,
+    full_eval_top_k=2,
     # Bootstrap: moderate candidates and demos
     num_candidates=15,
     max_bootstrapped_demos=3,
@@ -189,6 +194,7 @@ HEAVY_CONFIG = TierConfig(
     eval_batch_size=100,
     n_instruction_candidates=10,
     minibatch_full_eval_steps=10,
+    full_eval_top_k=3,
     # Bootstrap: full candidates and demos
     num_candidates=30,
     max_bootstrapped_demos=4,

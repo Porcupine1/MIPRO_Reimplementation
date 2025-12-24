@@ -34,6 +34,7 @@ class SurrogateOptimizer:
         minibatch_size: int = None,
         eval_batch_size: int = None,
         minibatch_full_eval_steps: int = None,
+        full_eval_top_k: int = None,
         seed: int = 42,
         use_minibatch: bool = True,
         val_split: str = "validation",
@@ -64,6 +65,7 @@ class SurrogateOptimizer:
         self.minibatch_size = minibatch_size if minibatch_size is not None else cfg.batch_size
         self.eval_batch_size = eval_batch_size if eval_batch_size is not None else cfg.eval_batch_size
         self.minibatch_full_eval_steps = minibatch_full_eval_steps if minibatch_full_eval_steps is not None else cfg.minibatch_full_eval_steps
+        self.full_eval_top_k = full_eval_top_k if full_eval_top_k is not None else getattr(cfg, "full_eval_top_k", 3)
         self.seed = seed
         self.use_minibatch = use_minibatch
         self.val_split = val_split
@@ -139,6 +141,7 @@ class SurrogateOptimizer:
             f"  Minibatch Size: {self.minibatch_size} (from {self.val_split})\n"
             f"  Full Eval Size: {self.eval_batch_size} (from {self.val_split})\n"
             f"  Full Eval Every: {self.minibatch_full_eval_steps} trials\n"
+            f"  Full Eval Top-K: {self.full_eval_top_k}\n"
             f"  Random Seed: {self.seed}\n" + "=" * 80
         )
 
@@ -308,6 +311,9 @@ class SurrogateOptimizer:
             )
         for predictor_idx, demo_sets in self.demo_candidates.items():
             module_name = self.predictor_to_module[predictor_idx]
+            # Skip empty demo sets: Optuna categorical distributions must be non-empty.
+            if not demo_sets:
+                continue
             distributions[f"{module_name}_demos"] = CategoricalDistribution(
                 list(range(len(demo_sets)))
             )
@@ -411,13 +417,16 @@ class SurrogateOptimizer:
         sorted_candidates = sorted(
             self.minibatch_candidates, key=lambda x: x["score"], reverse=True
         )
-        top_k = 3 if len(sorted_candidates) >= 3 else len(sorted_candidates)
+        top_k = max(1, int(self.full_eval_top_k)) if sorted_candidates else 0
+        top_k = min(top_k, len(sorted_candidates))
         candidates_to_eval = sorted_candidates[:top_k]
 
         for candidate in candidates_to_eval:
             config = candidate["config"]
             key = self._config_key(config)
-            if not force_final and key in self.full_eval_configs_seen:
+            # Even for the final refresh, do not re-evaluate configs we've already fully evaluated.
+            # force_final is about "run a refresh now", not "disable dedupe".
+            if key in self.full_eval_configs_seen:
                 continue
             self.full_eval_configs_seen.add(key)
 

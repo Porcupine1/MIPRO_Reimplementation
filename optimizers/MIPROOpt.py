@@ -115,12 +115,8 @@ class MIPROOptimizer:
         if not train_data:
             raise ValueError("Cannot optimize: No training data available")
         # Note: Dataset is already limited by MAX_EXAMPLES in QADataset.load()
-        val_data = self.dataset.get_split(split="validation")
-
-        # Initialize InstructionProposer with training data and program (handles grounding internally)
-        self.proposer = InstructionProposer(
-            train_examples=train_data, program=self.program
-        )
+        # NOTE: validation split is used later by SurrogateOptimizer via self._evaluate_program;
+        # do not eagerly load it here (avoids unused work).
 
         # Step 1: Bootstrap Few-Shot Examples
         logger.info("[Step 1/3] Bootstrapping few-shot examples...")
@@ -129,7 +125,7 @@ class MIPROOptimizer:
         # Check if we should use cached demos
         if self.use_cached_demos:
             logger.info("  Attempting to load demo candidates from cache...")
-            demo_candidates = load_demo_candidates()
+            demo_candidates = load_demo_candidates(expected_module_names=self.module_names)
             if demo_candidates is not None:
                 logger.info("  ✓ Successfully loaded demo candidates from cache!")
             else:
@@ -158,6 +154,8 @@ class MIPROOptimizer:
                 "max_bootstrapped_demos": cfg.max_bootstrapped_demos,
                 "max_labeled_demos": cfg.max_labeled_demos,
                 "num_train_examples": len(train_data),
+                "module_names": self.module_names,
+                "program_class": self.program.__class__.__name__,
             }
             save_demo_candidates(demo_candidates, metadata=metadata)
             logger.info("  ✓ Demo candidates saved to cache")
@@ -168,7 +166,9 @@ class MIPROOptimizer:
         # Check if we should use cached instructions
         if self.use_cached_instructions:
             logger.info("  Attempting to load instruction candidates from cache...")
-            self.instruction_candidates = load_instruction_candidates()
+            self.instruction_candidates = load_instruction_candidates(
+                expected_module_names=self.module_names
+            )
             if self.instruction_candidates is not None:
                 logger.info("  ✓ Successfully loaded instruction candidates from cache!")
             else:
@@ -179,6 +179,13 @@ class MIPROOptimizer:
         
         # Generate instruction candidates if not using cache or cache load failed
         if not self.use_cached_instructions:
+            # Lazy init InstructionProposer (GroundingHelper does LLM calls in __init__).
+            logger.info(
+                "  Initializing InstructionProposer (grounding summaries + LLM calls)..."
+            )
+            self.proposer = InstructionProposer(
+                train_examples=train_data, program=self.program
+            )
             self.instruction_candidates = self.proposer.propose_for_all_modules(
                 program=self.program,
                 task_desc=task_description,
@@ -203,6 +210,8 @@ class MIPROOptimizer:
             metadata = {
                 "n_instruction_candidates": self.n_instruction_candidates,
                 "num_train_examples": len(train_data),
+                "module_names": self.module_names,
+                "program_class": self.program.__class__.__name__,
             }
             save_instruction_candidates(self.instruction_candidates, metadata=metadata)
             logger.info("  ✓ Instruction candidates saved to cache")

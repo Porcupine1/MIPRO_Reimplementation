@@ -151,6 +151,21 @@ class InstructionProposer:
         ]
         parts.append("")
 
+        # Hard constraints that keep candidates usable for optimization.
+        # These are intentionally short and generic, and should complement (not replace)
+        # dataset-derived length guidance in the dataset summary.
+        parts.append("CONSTRAINTS (IMPORTANT):")
+        parts.append(
+            "- The proposed instruction must be short and task-focused (no stories, no multi-paragraph tutorials)."
+        )
+        parts.append(
+            "- It must explicitly tell the model to output ONLY the required field (query or answer) with no extra commentary."
+        )
+        parts.append(
+            "- It should discourage refusals and irrelevant safety boilerplate unless the user request is actually unsafe."
+        )
+        parts.append("")
+
         # DATASET SUMMARY (if enabled)
         if use_dataset_summary and dataset_summ:
             parts.append("DATASET SUMMARY:")
